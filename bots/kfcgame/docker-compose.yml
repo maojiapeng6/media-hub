@@ -1,0 +1,35 @@
+# ==============================================================================
+#  KFC 修仙 bot  ——  与 EmbyBoss 共用一个 MySQL 实例，独立库 kfcgame
+#  目录：/vol1/1000/docker/kfcgame
+#  说明：与 Sakura EmbyBoss 完全隔离，互不影响升级；积分通过跨库读写共用
+# ==============================================================================
+services:
+  kfcgame:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: kfcgame:local
+    container_name: kfcgame
+    restart: always
+    environment:
+      - TZ=Asia/Shanghai
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - ./fonts:/app/fonts:ro          # 中文字体（苹方粗体），榜单海报渲染用
+      - ./log:/app/log
+    networks:
+      - embyboss_embyboss-net        # 复用 EmbyBoss 的网络，才能用 embyboss_mysql 这个名字连库
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+        compress: "true"
+
+networks:
+  embyboss_embyboss-net:
+    external: true

@@ -1,0 +1,14 @@
+#!/bin/sh
+# 隐私守门 pre-commit 钩子：任何 CRIT/HIGH 未登记到 baseline 的命中 => 阻止提交
+# 安装：git config core.hooksPath .githooks  （见 README 部署章节）
+PY="${PYTHON:-python}"
+$PY tools/privacy_scan.py --paths . --out audit/privacy_findings.json \
+    --ext ".py,.html,.js,.json,.yml,.yaml,.env,.conf,.ini,.sh" \
+    --exclude audit .githooks --baseline .privacy-baseline.txt
+if [ $? -ne 0 ]; then
+    echo ""
+    echo "❌ 隐私守门未通过：检测到未清理的凭据/隐私（见上方列表）。"
+    echo "   请脱敏后重提交，或确认属安全样例再登记进 .privacy-baseline.txt。"
+    exit 1
+fi
+echo "✅ 隐私守门通过 (blocking=0)"

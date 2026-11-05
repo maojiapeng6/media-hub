@@ -1,0 +1,74 @@
+{
+  "_comment": "服务实例注册表模板。复制为 services.json 后按需增删实例。所有凭据均为占位符，请填自己的。每个数组支持多实例（前端 ➕ 添加）。",
+  "emby": [
+    {
+      "id": "emby-main",
+      "name": "主媒体库",
+      "url": "http://127.0.0.1:8096",
+      "api_key": "your_emby_api_key_here",
+      "enabled": true
+    }
+  ],
+  "moviepilot": [
+    {
+      "id": "mp-1",
+      "name": "MoviePilot",
+      "url": "http://127.0.0.1:3000",
+      "username": "your_mp_username",
+      "password": "your_mp_password"
+    }
+  ],
+  "qbittorrent": [
+    {
+      "id": "qb-1",
+      "name": "qBittorrent",
+      "url": "http://127.0.0.1:8080",
+      "username": "your_qb_username",
+      "password": "your_qb_password"
+    }
+  ],
+  "mediatidy": [
+    {
+      "id": "mt-1",
+      "name": "MediaTidy",
+      "url": "http://127.0.0.1:2019",
+      "username": "your_mt_username",
+      "password": "your_mt_password"
+    }
+  ],
+  "clouddrive2": [
+    {
+      "id": "cd2-1",
+      "name": "CloudDrive2",
+      "url": "http://127.0.0.1:19798"
+    }
+  ],
+  "telegram_bots": [
+    {
+      "id": "bot-1",
+      "name": "我的机器人",
+      "bot_token": "your_bot_id:your_bot_token_here",
+      "api_id": "your_api_id",
+      "api_hash": "your_api_hash"
+    }
+  ],
+  "tmdb": [
+    {
+      "id": "default",
+      "name": "TMDB",
+      "api_key": "your_tmdb_api_key_here"
+    }
+  ],
+  "mysql": {
+    "host": "127.0.0.1",
+    "port": 3306,
+    "user": "root",
+    "password": "changeme",
+    "databases": ["embyboss", "kfcgame", "pt2cloud"]
+  },
+  "proxy": {
+    "enabled": false,
+    "host": "",
+    "port": ""
+  }
+}

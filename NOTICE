@@ -1,0 +1,17 @@
+# NOTICE（第三方组件声明）
+
+本仓库包含源自第三方开源项目的代码，遵循各自许可证：
+
+## bots/embyboss/
+- 源自 **Sakura_embyboss**（上游：berry8838/Sakura_embyboss）
+- 许可证：**GPL-3.0**（全文见 `bots/embyboss/LICENSE`）
+- 本项目在上游基础上做了定制修改；该目录整体继续以 GPL-3.0 发布，
+  版权分别归属上游原作者与该目录修改者。
+- 上游声明：本项目仅供学习交流使用。
+
+## 其余目录（app/、bots/kfcgame/、bots/pt2cloud/、tools/、config/、deploy/、docs/）
+- 许可证：**Apache-2.0**（全文见仓库根 `LICENSE`）
+
+## 依赖服务（不在本仓库内，仅通过 API 对接）
+Emby / MoviePilot / qBittorrent / MediaTidy / CloudDrive2 —— 各自遵循其上游许可证，
+使用者需自行遵守相应服务条款。

@@ -1,0 +1,14 @@
+# 全部使用纯 Python 或有现成 wheel 的包，避免容器内编译/联网装系统包
+# TgCrypto：PyPI 上是 manylinux 预编译 wheel（约 60KB），**不需要 gcc/apt**。
+#           装上后 Pyrogram 的 MTProto 加解密走 C 实现，消息收发显著提速；
+#           不装会退化为纯 Python 计算（日志会打印 "TgCrypto is missing"）。
+pyrogram==2.0.106
+TgCrypto==1.2.5
+pymysql==1.1.1
+SQLAlchemy==2.0.36
+APScheduler==3.10.4
+requests==2.32.3
+loguru==0.7.2
+tzdata==2024.2
+# 榜单海报渲染（PIL 有 manylinux wheel，纯二进制安装）
+Pillow==12.3.0

@@ -1,0 +1,15 @@
+# 隐私扫描 baseline —— 已人工审核确认「非本人隐私、可安全发布」的命中项
+# 格式：<文件路径子串>::<规则ID>   （规则ID 用 * 表示该文件所有命中都放行）
+# 说明：加入 baseline 前必须人工确认，绝不把真实凭据写进这里。
+
+# 1) 上游 Sakura EmbyBoss 自带的影视排行榜「测试样例数据」（32hex 是 Emby ItemId，非密钥）
+bots/embyboss/bot/ranks_helper/ranks_draw.py::PRIV-APIHASH
+
+# 2) 守门扫描器自身的检测正则字面量（规则源码，不是数据）
+tools/privacy_scan.py::*
+
+# 3) embyboss Web API 文档里的请求体占位示例（username/password 为示意字段名）
+bots/embyboss/bot/web/api/login.py::PRIV-SECRET
+
+# 4) 上游 Sakura EmbyBoss compose 自带的占位密码模板（123456/1234，非真实值）
+bots/embyboss/docker-compose.yml::PRIV-PWD

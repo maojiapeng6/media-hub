@@ -1,0 +1,72 @@
+# ============================================================
+#  KFC / 影音总控台 开源仓库 .gitignore
+#  核心目的：任何真实凭据/本地数据/隐私产物 绝不进版本库
+# ============================================================
+
+# --- 真实配置与凭据（必须用 .example 模板，实体文件永不入库）---
+config.json
+**/config.json
+!config/**/config.example.json
+!**/config_example.json
+*.env
+.env
+!**/.env.example
+secrets.json
+state.json
+keepalive/secrets.json
+*.pem
+*.key
+*.p12
+*.pfx
+
+# --- 数据库 / 运行时数据 ---
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+*.bak
+*.bak.*
+*.tgz
+*.tar.gz
+data/
+log/
+logs/
+
+# --- 本地快照 / 备份 / 临时（这些是开发机产物）---
+_tmp/
+_live/
+_hub/
+_gap_live/
+_nas_snapshot/
+_nas_ka/
+_edge_ka_profile/
+**/__pycache__/
+*.pyc
+*.pyo
+node_modules/
+.npm/
+.venv/
+venv/
+
+# --- 隐私资源（浏览器登录态 profile 等，绝不可提交）---
+*_profile/
+.DS_Store
+Thumbs.db
+
+# --- IDE / 工具 ---
+.vscode/
+.idea/
+*.swp
+
+# --- 构建产物 ---
+dist/
+build/
+*.egg-info/
+
+# 扫描器报告（本地留存，不入库历史泄露样本）
+audit/privacy_findings.json
+
+# 个人秘密哈希清单（本地守门用，绝不入库）
+.privacy-hashes.txt

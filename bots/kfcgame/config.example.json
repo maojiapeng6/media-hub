@@ -1,0 +1,43 @@
+{
+  "_comment": "复制为 config.json 并填入你自己的凭据。config.json 已被 .gitignore 拦截，不会入库。",
+  "bot_token": "your_bot_id:your_bot_token_here",
+  "api_id": "your_api_id",
+  "api_hash": "your_api_hash",
+  "proxy": {
+    "enabled": false,
+    "scheme": "socks5",
+    "hostname": "",
+    "port": 7890,
+    "username": null,
+    "password": null
+  },
+  "db": {
+    "host": "mysql",
+    "port": 3306,
+    "user": "your_db_user",
+    "password": "your_db_password",
+    "database": "kfcgame"
+  },
+  "emby": {
+    "url": "http://127.0.0.1:8096",
+    "api_key": "your_emby_api_key_here"
+  },
+  "moviepilot": {
+    "url": "http://127.0.0.1:3000",
+    "username": "your_mp_username",
+    "password": "your_mp_password"
+  },
+  "qb": {
+    "url": "http://127.0.0.1:8080",
+    "username": "your_qb_username",
+    "password": "your_qb_password"
+  },
+  "mt": {
+    "url": "http://127.0.0.1:2019",
+    "username": "your_mt_username",
+    "password": "your_mt_password"
+  },
+  "cd2": {
+    "url": "http://127.0.0.1:19798"
+  }
+}

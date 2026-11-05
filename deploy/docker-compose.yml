@@ -1,0 +1,100 @@
+# ==============================================================================
+#  MediaHub 全栈一键部署（核心）
+#  - media-hub  总控台  :5678
+#  - mysql      共享数据库（面板与 Bot 分库）
+#  kfcgame / pt2cloud 为可选组件，取消注释即可启用。
+#
+#  用法：
+#    cp ../config/.env.example ./ .env   （填入 DB_ROOT_PASSWORD 等）
+#    docker compose up -d
+#  飞牛 NAS 注意：若默认地址池耗尽，为自定义网络显式指定 subnet（见末尾）。
+# ==============================================================================
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: mediahub-mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-changeme}
+      TZ: Asia/Shanghai
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - ./data/mysql:/var/lib/mysql
+    networks: [mediahub]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  media-hub:
+    build: ../app
+    image: mediahub:latest
+    container_name: media-hub
+    restart: always
+    depends_on:
+      mysql: { condition: service_healthy }
+    environment:
+      TZ: Asia/Shanghai
+      PORT: 5678
+      # 面板通过 Docker Engine API 管理其它容器（挂载 docker.sock）
+      # 业务凭据/服务实例由 /data/webcfg.json 或以下环境变量提供（未配则功能不点亮）
+      DB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-}
+      PTDB_HOST: mysql
+      PTDB_PORT: "3306"
+      PTDB_USER: ${PTDB_USER:-}
+      PTDB_PASS: ${PTDB_PASS:-}
+      KFC_MASTER_KEY: ${KFC_MASTER_KEY:-}
+      EMBY_API_KEY: ${EMBY_API_KEY:-}
+      MP_USER: ${MP_USER:-}
+      MP_PASS: ${MP_PASS:-}
+      QB_USER: ${QB_USER:-}
+      QB_PASS: ${QB_PASS:-}
+      MT_USER: ${MT_USER:-}
+      MT_PASS: ${MT_PASS:-}
+      RT_URL: ${RT_URL:-}
+      RT_USER: ${RT_USER:-}
+      RT_PASS: ${RT_PASS:-}
+      TG_OWNER_UID: ${TG_OWNER_UID:-}
+      TMDB_API_KEY: ${TMDB_API_KEY:-}
+    volumes:
+      - ./data/mediahub:/data
+      - /var/run/docker.sock:/var/run/docker.sock   # 容器管理；不需要可移除
+    ports:
+      - "5678:5678"
+    networks: [mediahub]
+
+  # ── 可选：积分/求片 Bot ──
+  # kfcgame:
+  #   build: ../bots/kfcgame
+  #   image: kfcgame:local
+  #   container_name: kfcgame
+  #   restart: always
+  #   environment: [TZ=Asia/Shanghai, PYTHONUNBUFFERED=1]
+  #   volumes:
+  #     - ../bots/kfcgame/config.json:/app/config.json:ro
+  #     - ./data/kfcgame/log:/app/log
+  #   networks: [mediahub]
+
+  # ── 可选：PT 上云 / strm ──
+  # pt2cloud:
+  #   build: ../bots/pt2cloud
+  #   image: pt2cloud:local
+  #   container_name: pt2cloud
+  #   restart: always
+  #   environment:
+  #     TZ: Asia/Shanghai
+  #     DB_HOST: mysql
+  #     DB_PASS: ${PT2CLOUD_DB_PASS:-}
+  #     QB_PASS: ${QB_PASS:-}
+  #     MT_PASS: ${MT_PASS:-}
+  #   networks: [mediahub]
+
+networks:
+  mediahub:
+    driver: bridge
+    # 飞牛地址池耗尽时取消下行注释，显式指定一个空闲网段：
+    # ipam:
+    #   config:
+    #     - subnet: 172.16.0.0/16

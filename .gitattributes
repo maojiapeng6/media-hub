@@ -1,0 +1,6 @@
+# 统一换行符，避免跨平台 diff 噪音（面板是 Linux 容器应用）
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ttf binary
+*.psd binary
