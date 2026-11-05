@@ -1,0 +1,46 @@
+name: privacy-guard & build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  privacy:
+    name: 隐私守门（泄露即 fail）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: privacy_scan
+        run: python tools/privacy_scan.py --paths . --out /tmp/pf.json --ext ".py,.html,.js,.json,.yml,.yaml,.env,.conf,.ini,.sh" --exclude audit .githooks --baseline .privacy-baseline.txt
+
+  compile:
+    name: Python 语法编译
+    runs-on: ubuntu-latest
+    needs: privacy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: py_compile 全部 .py
+        run: |
+          fail=0
+          find . -name "*.py" -not -path "./.git/*" | while read f; do
+            python -m py_compile "$f" || { echo "FAIL $f"; exit 1; }
+          done
+      - name: 冒烟启动面板（无配置应能起服务）
+        run: |
+          cd app
+          (timeout 8 python app.py >/tmp/mh.log 2>&1 &) ; sleep 4
+          curl -sf http://127.0.0.1:5678/api/health || { cat /tmp/mh.log; exit 1; }
+          echo "panel smoke OK"
+
+  compose-config:
+    name: compose 校验
+    runs-on: ubuntu-latest
+    needs: privacy
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp config/.env.example deploy/.env && docker compose -f deploy/docker-compose.yml config -q
