@@ -747,7 +747,16 @@ def sec_rate(k, limit=5, window=300):
 
 
 # ─────────── 授权码（HMAC-SHA256 离线校验，Base32 去易混字符） ───────────
+def _vendor_secret():
+    """厂商发码密钥（G4）：环境变量 KFC_VENDOR_SECRET。
+    ★ 商业化模式：作者/发码方持有该密钥，用同一密钥签发的授权码可在任何
+      配置了该变量的部署实例上通过校验（跨机发码）。
+      未配置 → 回退本机随机 secret（单机自签自验，兼容个人部署）。"""
+    return (os.environ.get('KFC_VENDOR_SECRET') or '').strip()
+
+
 def _license_secret():
+    """本机签名密钥（首启随机生成，存 SEC_ROOT/sec.db）。"""
     try:
         c = sec_db()
         r = c.execute("SELECT v FROM meta WHERE k='license_secret'").fetchone()
@@ -757,19 +766,33 @@ def _license_secret():
         return 'kfc-default-secret'
 
 
+def _license_secrets():
+    """校验密钥链：厂商密钥优先，本机 secret 兜底（旧自签码仍可验）。"""
+    v = _vendor_secret()
+    return ([v] if v else []) + [_license_secret()]
+
+
 def _norm_code(code):
-    """归一化授权码输入：去分隔符/空格，统一大写，易混字符互换
-    （0↔O、1↔I、L 不在字母表中 → 归到最近的合法字符）。"""
+    """归一化授权码输入：去分隔符/空格，统一大写。
+    ★ 修复（2026-11-05）：字母表 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' 实际
+      含 I/L/O（32 进制必须 32 字符），历史映射 I→J/L→K/O→Q 会把合法码
+      改写导致签名校验必败（自签自验都不过）。现只映射不在字母表中的
+      视觉易混字符：0→O、1→I。"""
     s = re.sub(r'[^A-Za-z0-9]', '', str(code or '')).upper()
-    tbl = str.maketrans({'O': 'Q', 'I': 'J', 'L': 'K', '0': '2', '1': '3'})
+    tbl = str.maketrans({'0': 'O', '1': 'I'})
     return s.translate(tbl)
 
 
-def license_sign(payload_b32):
-    """对 Base32 载荷做 HMAC-SHA256，返回 10 字符签名段（去易混）。"""
-    mac = hmac.new(_license_secret().encode(), payload_b32.encode(), hashlib.sha256).digest()
-    n = int.from_bytes(mac[:8], 'big')
-    return sec_b32(n, 13)
+def license_sign(payload_b32, secret=None):
+    """对 Base32 载荷做 HMAC-SHA256，返回 6 字符签名段（30bit 有效，去易混）。
+    ★ 安全修复（2026-11-05）：原实现 sec_b32(n,13)[:6] 因 sec_b32 内部
+      `n &= 0xFFFFFFFF` 截断 + 13 字符宽度左侧补 'A'，导致前 6 位恒为
+      'AAAAAA' —— 任何伪造码都能通过校验。现直接取 HMAC 低 30bit 编码
+      6 字符，签名真实生效。旧码（sig=AAAAAA）将失效，需用新工具重签。"""
+    s = secret if secret is not None else (_vendor_secret() or _license_secret())
+    mac = hmac.new(s.encode(), payload_b32.encode(), hashlib.sha256).digest()
+    n = int.from_bytes(mac[:8], 'big') & 0x3FFFFFFF
+    return sec_b32(n, 6)
 
 
 def license_gen(licensee='', plan='pro', days=None, features=None,
@@ -794,7 +817,7 @@ def license_gen(licensee='', plan='pro', days=None, features=None,
     packed = (fb << 4) | (int(max_nodes) & 15)
     body = (sec_b32(packed, 2) + sec_b32(issued // 3600, 4)
             + sec_b32(expire // 3600, 4))
-    sig = license_sign(body)[:6]
+    sig = license_sign(body)
     code = 'KFC-' + '-'.join([body[0:4], body[4:8], body[8:10] + sig[0:2], sig[2:6]])
     with _sec_lock:
         c = sec_db()
@@ -833,7 +856,9 @@ def license_parse(code):
     except Exception:
         return None
     body = body16[0:10]
-    if not hmac.compare_digest(license_sign(body)[:6], sig6):
+    # ★ G4 双密钥校验链：厂商密钥优先，本机 secret 兜底（任一匹配即通过）
+    if not any(hmac.compare_digest(license_sign(body, s), sig6)
+               for s in _license_secrets()):
         return None
     fb = packed >> 4
     max_nodes = packed & 15

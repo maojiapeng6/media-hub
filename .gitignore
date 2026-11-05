@@ -70,3 +70,7 @@ audit/privacy_findings.json
 
 # 个人秘密哈希清单（本地守门用，绝不入库）
 .privacy-hashes.txt
+
+# 厂商发码密钥与授权码台账（绝不入库）
+.vendor-secret.txt
+.license-ledger.json

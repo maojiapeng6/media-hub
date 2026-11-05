@@ -1,5 +1,25 @@
 # 发布上线手册（P6 · 自助推送指南）
 
+> 🔴 **最高指令（2026-11-05，永久生效）**：**每次版本更新都自动走本手册的「常规发布流程」并存档，每一次都要，用户不提醒也必须执行。**
+> **每次新任务开工先读三文档**：①根目录 `AI接力_开源发布ROADMAP.md` ②本文件 ③`multi-instance-design.md`。
+
+## 常规发布流程（每次版本更新固定走，不许跳步）
+
+```bash
+cd openrepo
+# 1. 更新 CHANGELOG.md（Keep a Changelog 格式，写清 Added/Changed/Fixed）
+# 2. 守门（非 0 禁止发布）
+python tools/privacy_scan.py --paths . --baseline .privacy-baseline.txt --exclude audit .githooks
+# 3. 存档
+git add -A && git commit -m "release vX.Y.Z: <一句话>"
+git tag vX.Y.Z
+# 4. 发布（remote 配好后）
+git push origin master --tags
+# 5. 回写锚点：更新根目录 ROADMAP §8 阶段进度 + .workbuddy/memory 当日日志
+```
+
+## 首次发布（三步，2 分钟）
+
 > 本仓库在本地已 100% 就绪（隐私守门全绿、CI 配齐、文档齐全）。
 > 推送到 GitHub **不需要把任何凭据交给任何工具**——按下面三步自己就能完成，全程 2 分钟。
 
