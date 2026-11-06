@@ -5411,7 +5411,7 @@ def act_emby(which, act, arg):
         return {'ok': st < 400, 'msg': '已触发该库扫描 HTTP %s' % st, 'http': st}
     if act == 'lib_rescan':
         # 深度重扫：递归重解析（含新文件+移除失效+按设置重识别元数据）
-        st, _ = hreq(addr, port, 'POST', '/Items/%s/Refresh?Recursive=true&RefreshChildren=true&MetadataRefreshMode=Default'
+        st, _ = hreq(addr, port, 'POST', '/Items/%s/Refresh?Recursive=true&MetadataRefreshMode=Default'
                      % urllib.parse.quote(arg or ''), None, H, 15)
         return {'ok': st < 400, 'msg': '已触发库递归扫描 HTTP %s' % st, 'http': st}
     if act == 'lib_metadata':
@@ -5435,7 +5435,7 @@ def act_emby(which, act, arg):
     if act == 'lib_scan_files':
         # v1.25 S11：扫描媒体库文件（只扫新增文件，不重下元数据/图片，最快；等价于 Emby「扫描新增文件」）
         st, _ = hreq(addr, port, 'POST',
-                     '/Items/%s/Refresh?Recursive=true&RefreshChildren=true'
+                     '/Items/%s/Refresh?Recursive=true'
                      % urllib.parse.quote(arg or ''), None, H, 15)
         return {'ok': st < 400, 'msg': '已触发媒体库文件扫描 HTTP %s' % st, 'http': st}
     if act == 'lib_no_poster':
@@ -15952,7 +15952,11 @@ def emby_sessions():
             # ★★ v1.25b S5：动态范围统一英文规范（Dolby Vision P8 / HDR10 / HDR10+ / HLG / SDR）。
             #   用户原话：「杜比世界，你不要只写个杜比世界……P7、B5、P8 都要给我标清楚了」。
             vr = str(vstream.get("VideoRange") or vstream.get("VideoRangeType") or "")
-            _rng = _norm_dv(vr, vstream.get("DvProfile"))
+            _drpaths = [str(now.get("Path") or ""), str(now.get("FileName") or "")]
+            for _ms in (now.get("MediaSources") or [])[:2]:
+                if isinstance(_ms, dict):
+                    _drpaths.append(str(_ms.get("Path") or ""))
+            _rng = _norm_dr_full(vr, vstream.get("DvProfile"), " ".join(_drpaths))
             if _rng and _rng != 'SDR':
                 q.append(_rng)
             elif _rng == 'SDR':
@@ -16092,9 +16096,14 @@ def emby_sessions():
                         _SESS_ORDER.pop(_k, None)
                 first_ts = _rec['first']
             _tgm = tg_name_map().get(str(x.get("UserName") or "")) or {}
+            _uid = str(x.get("UserId") or "")
+            _uava = ("/embyimg/emby/users/%s/Primary?w=96" % _uid) if _uid else ""
             rows.append({
                 # ★ v1.18：会话唯一键（前端 DOM id / 排序锚点都靠它）
                 "session_id": _sid,
+                "user_id": _uid,
+                "user_avatar": _uava,
+                "dr": _rng,
                 "first_ts": int(first_ts),
                 "user": x.get("UserName") or "未知",
                 "tg": _tgm.get("tg") or 0,
@@ -16920,6 +16929,37 @@ def _emby_quality_guess(path, name):
             except Exception:
                 pass
     return ' · '.join(parts)
+
+
+def _norm_dr_full(vr, dvp=None, path=""):
+    # 2026-11-06 详细动态范围：DV 标到 P5/P7/P8，HDR10+/HDR10/HLG/SDR 全部详细显示。
+    # 文件名优先（MT 整理后写死真实 profile）+ Emby 字段兜底。
+    import re as _re
+    p = str(path or "")
+    pl = p.lower()
+    v = _norm_dv(vr, dvp)
+    mdv = _re.search(r"(?:dolby[ ._-]*vision|dovi|\bdv\b)[ ._-]*p?[ ._-]*([4-8])\b", pl)
+    is_dv = bool(_re.search(r"dolby[ ._-]*vision|\bdovi\b|\bdv\b|dvh1|dvhe|dvav", pl)) or "dolby" in v.lower()
+    extra = ""
+    if _re.search(r"hdr10\+|hdr10plus", pl):
+        extra = " + HDR10+"
+    elif _re.search(r"\bhdr10\b|\bhdr\b", pl):
+        extra = " + HDR10"
+    if is_dv:
+        if mdv:
+            base = "Dolby Vision P%s" % mdv.group(1)
+        else:
+            base = v if v.startswith("Dolby Vision P") else "Dolby Vision"
+        return base + extra
+    if _re.search(r"hdr10\+|hdr10plus", pl) or v == "HDR10+":
+        return "HDR10+"
+    if _re.search(r"\bhdr10\b|\bhdr\b", pl) or v == "HDR10":
+        return "HDR10"
+    if _re.search(r"\bhlg\b", pl) or v == "HLG":
+        return "HLG"
+    if _re.search(r"\bsdr\b", pl):
+        return "SDR"
+    return v or "SDR"
 
 
 def _norm_dv(vr, dvp=None):

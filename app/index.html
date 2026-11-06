@@ -7638,7 +7638,7 @@ body.light .hbar-row .tr{background:rgba(20,30,60,.07)}
 
 .rnk-row{display:grid;grid-template-columns:28px 22px minmax(0,1.35fr) minmax(60px,1fr) auto auto;
 
-  gap:10px;align-items:center;padding:7px 11px;border-radius:12px;
+  gap:10px;align-items:center;padding:3px 10px;border-radius:12px;line-height:1.15;
 
   background:linear-gradient(100deg,rgba(255,255,255,.045),rgba(255,255,255,.015));
 
@@ -7726,7 +7726,7 @@ body.light .rnk-row.top .sec{color:#b45309}
 
    （同一个人每次刷新颜色一致，不会变脸），观感等同系统默认头像而不是缺图。 */
 
-.rnk-row .rnk-av{width:21px;height:21px;border-radius:50%;flex:0 0 auto;overflow:hidden;
+.rnk-row .rnk-av{width:20px;height:20px;border-radius:50%;flex:0 0 auto;overflow:hidden;
 
   display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;
 
@@ -22456,6 +22456,17 @@ async function ovSessions(){
 
       :'<span class="st-chip direct"><span class="sc-i">⇄</span><span class="sc-t">直连原画</span></span>';
 
+    const _ini=esc((x.user||'?').slice(0,1));
+    const _avaCore='<span style="position:absolute;inset:0;display:inline-flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:var(--sub)">'+_ini+'</span>'
+      +(x.user_avatar
+        ? '<img src="'+esc(x.user_avatar)+'" style="position:absolute;inset:0;width:34px;height:34px;border-radius:50%;object-fit:cover;border:1px solid rgba(255,255,255,.12)"'
+          +' onerror="this.style.display=\'none\'"'
+          +' onload="if(!this.naturalWidth)this.style.display=\'none\'">'
+        : '');
+    const _avaWrap='<span style="position:relative;display:inline-flex;width:34px;height:34px;flex:0 0 auto;vertical-align:middle">'+_avaCore+'</span>';
+    const ava = x.tg_url
+      ? '<a href="'+esc(x.tg_url)+'" target="_blank" title="点击打开 '+esc(x.user)+' 的 TG 主页">'+_avaWrap+'</a>'
+      : _avaWrap;
     const who=x.tg_url
 
       ? '<b><a href="'+esc(x.tg_url)+'" target="_blank" style="color:var(--acc)">'+esc(x.user)+'</a></b>'
@@ -22474,7 +22485,7 @@ async function ovSessions(){
 
     const res=pick(/^(4K|2K|1080|720|\d{3,4}p|\d{3,4}×\d{3,4})/i)||pick(/^\d{3,4}×\d{3,4}$/i);
 
-    const dr=pick(/^(Dolby Vision|HDR10\+|HDR10|HLG|SDR)$/i)||pick(/HDR|DV|杜比/i);
+    const dr=String(x.dr||pick(/^Dolby Vision(?: P[4-8])?|^HDR10\+|^HDR10|^HLG|^SDR/i)||pick(/Dolby Vision|HDR10|HLG|SDR|DV|杜比/i)||'');
 
     const depth=pick(/\d{1,2}bit/i);
 
@@ -22515,6 +22526,7 @@ async function ovSessions(){
       +'<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">'
 
       +'<span style="font-size:14.5px;font-weight:600;color:var(--txt)">🎬 '+esc(x.item_name)+'</span>'
+      +(dr?'<span style="display:inline-block;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:99px;color:#f0e2ff;white-space:nowrap;vertical-align:middle;background:linear-gradient(100deg,rgba(168,85,247,.30),rgba(56,189,248,.20));border:1px solid rgba(168,85,247,.5)" title="动态范围">'+esc(dr)+'</span>':'')
 
       +(x.ep?'<span class="tag acc" style="font-size:10.5px">'+esc(x.ep)+'</span>':'')
 
@@ -22522,7 +22534,7 @@ async function ovSessions(){
 
       +'<div class="row" style="gap:6px;flex-wrap:wrap;margin-top:6px;font-size:12px">'
 
-      +'<span style="color:var(--sub)">👤</span>'+who
+      +ava+who
 
       +(x.tg?'<span style="color:var(--sub);font-size:11.5px">UID '+esc(x.tg)+'</span>':'')
 
@@ -25640,7 +25652,7 @@ async function ovRank(){
 
         ? ('<span class="rnk-av '+_gen+'" title="'+esc(x.name)+'" style="background:transparent">'
 
-           +'<img src="'+esc(x.avatar)+'" loading="lazy" alt="" onerror="'+_dead+'"></span>')
+           +'<img src="'+esc(x.avatar)+'" loading="lazy" alt="" onerror="'+_dead+'" onload="if(!this.naturalWidth){'+_dead+'}"></span>')
 
         : ('<span class="rnk-av '+_gen+'" title="'+esc(x.name)+'">'+esc(ini)+'</span>');
 
