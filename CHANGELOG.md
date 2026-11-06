@@ -9,6 +9,25 @@
 - 业务写端点强制登录（G1）
 - 首次配置向导对齐 services.json
 
+## [0.1.4] - 2026-11-06 · GitHub 仓库分类规范 + 一键建仓发布
+
+> 用户授权「GitHub 上要建什么库自己建好，分类做好、整齐排列」；本轮把仓库分类与自动发布链路全部落地。
+
+### Added
+- **`.github/ISSUE_TEMPLATE/`**（`config.yml` 分流 / `bug_report.yml` / `feature_request.yml`）+ `PULL_REQUEST_TEMPLATE.md`：按模块分类、强制隐私确认、GPL 提示（补齐 ROADMAP P5）。
+- **`docs/repo-layout.md`**：一级目录职责表、命名约定、文档与 GitHub 元数据分类、仓库设置（名称/可见性/topics/许可证）、新增文件三条检查。
+- **`scripts/bootstrap_github.py`**：零凭据一键建仓 → 设置简介 / topics / 10 个 issue 分类标签 → 配置 remote → push master + 全部 tag → 建 Release；全幂等，支持 `--dry-run` / `--public` / `--owner` / `--no-push`；**推送前强制 `privacy_scan` 守门**。
+- `config/.env.example` 补齐 `deploy/docker-compose.yml` 实际引用的全部变量键（`PTDB_*` / `KFC_MASTER_KEY` / `RT_*` / `PT2CLOUD_DB_PASS`），消除 compose 未定义变量告警。
+
+### Changed
+- README 快速开始改为与 compose 真实路径一致（`deploy/.env` + 首次配置向导），补完整目录树与组件表。
+- `docs/publish-checklist.md`：由「用户手工三步」升级为「**授权一次后 AI 全自动**」，补齐分类设置与验收清单。
+- `deploy/docker-compose.yml` 注释中的复制命令笔误修正。
+
+### Notes
+- **不拆仓**：保持单主仓 + 分段许可证声明（根 Apache-2.0 / `bots/embyboss/` GPL-3.0），避免破坏既有隐私基线与 CI；按许可证拆仓留作后续可选评估。
+- 本轮**仍未 push**：实机核实本机无 `gh`、无 `GH_TOKEN/GITHUB_TOKEN`、无 SSH key、无凭据管理器条目、GitHub 连接器未绑定。授权后脚本自动完成建仓与发布，无需人工新建仓库。
+
 ## [0.1.3] - 2026-11-06 · N 实例注册表 + 实时观看布局/MT 完整名
 
 > 线上 media-hub 已按锚点增量热修并实机验收；发布副本为**零凭据参考实现 + 运行时文档**，

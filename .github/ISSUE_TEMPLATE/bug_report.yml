@@ -1,0 +1,58 @@
+name: "🐛 缺陷反馈"
+description: 功能异常、报错、界面错乱，附复现步骤
+title: "[Bug] "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请先确认：**不要粘贴任何真实 Token、API Key、密码、内网 IP 或私人域名**。
+        日志与配置一律脱敏为 `changeme` / `your_xxx_here` / `127.0.0.1`。
+  - type: dropdown
+    id: module
+    attributes:
+      label: 涉及模块
+      options:
+        - app/ 总控台前端
+        - app/ 后端接口
+        - bots/kfcgame
+        - bots/pt2cloud
+        - bots/embyboss
+        - deploy/ 部署编排
+        - config/ 配置模板
+        - docs/ 文档
+        - 其他
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 版本 / 提交号
+      placeholder: "v0.1.4 或 commit 短哈希"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 1. 打开… 2. 点击… 3. 观察…
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望结果 / 实际结果
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 脱敏日志（可选）
+      render: shell
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 隐私确认
+      options:
+        - label: 我已确认以上内容不含任何真实凭据或内网信息
+          required: true

@@ -20,20 +20,37 @@
 
 ```bash
 # 1. 克隆
-git clone <your-repo> && cd mediahub
+git clone https://github.com/<owner>/media-hub.git && cd media-hub
 
-# 2. 生成配置（模板全为占位符）
-cp config/.env.example        app/.env
-cp config/services.json.example app/config/services.json
+# 2. 生成环境变量（模板全为占位符，填好后的 deploy/.env 不会入库）
+cp config/.env.example deploy/.env
 
-# 3. 编辑 .env / services.json，填入你自己的 Emby API Key、MP/qB/MT 账号、TG Bot Token…
-
-# 4. 起面板
-docker compose -f deploy/docker-compose.yml up -d mediahub
+# 3. 起面板（服务实例也可在 Web 首次配置向导里逐项填写，无需手工编辑 JSON）
+docker compose -f deploy/docker-compose.yml up -d
 # 浏览器打开 http://<你的NAS_IP>:5678 → 首次进入配置向导
 ```
 
-> 详细部署见 [`docs/`](docs/)：[快速开始](docs/quickstart.md) · [架构图](docs/architecture.md) · [常见问题](docs/faq.md)
+> 详细部署见 [`docs/`](docs/)：[快速开始](docs/quickstart.md) · [架构图](docs/architecture.md) · [常见问题](docs/faq.md) · [多实例运行时](docs/multi-instance-runtime.md)
+> 维护者请看：[仓库分类地图](docs/repo-layout.md) · [发布上线手册](docs/publish-checklist.md)
+
+## 🗂️ 仓库结构（分类地图）
+
+```
+media-hub/
+├── app/                 # ✅ 核心：总控台后端 app.py + 前端 index.html + 多实例参考实现
+├── bots/                # 可选模块：kfcgame / pt2cloud / embyboss
+├── config/              # 配置模板：.env.example / services.json.example（只放 .example）
+├── deploy/              # docker-compose.yml 全栈编排
+├── docs/                # 文档：quickstart / architecture / multi-instance-* / faq / publish-checklist / repo-layout
+├── tests/               # test_*.py，纯标准库
+├── tools/               # 仓库工具：privacy_scan.py 守门、license_issuer.py 发码
+├── scripts/             # 发布运维：bootstrap_github.py 一键建仓 + 分类 + push + Release
+├── .github/             # CI workflows + ISSUE/PR 模板
+├── .githooks/           # pre-commit 隐私守门
+└── audit/               # 本地扫描报告（gitignore，不入库）
+```
+
+> 完整约定见 [`docs/repo-layout.md`](docs/repo-layout.md)：什么文件放哪里、命名规则、GitHub topics 与许可证分段声明。
 
 ## 📦 组件
 
@@ -43,9 +60,13 @@ docker compose -f deploy/docker-compose.yml up -d mediahub
 | `bots/kfcgame/` | 积分经济 + PT 任务 + 求片 Telegram Bot | 可选 |
 | `bots/pt2cloud/` | PT 上云 / strm 链路服务 | 可选 |
 | `bots/embyboss/` | Emby 用户管理 Bot（**Sakura EmbyBoss 衍生**） | 可选 |
-| `config/` | 配置模板（`.env.example` / `services.json.example`） | ✅ |
+| `config/` | 配置模板（`.env.example` / `services.json.example`，只放 `.example`） | ✅ |
 | `deploy/` | docker-compose 全栈编排 | ✅ |
-| `tools/` | 隐私守门扫描器等仓库工具 | 开发 |
+| `docs/` | 文档：入门 / 架构 / 多实例 / FAQ / 发布手册 / 仓库分类地图 | ✅ |
+| `tests/` | 单元测试（纯标准库） | 开发 |
+| `tools/` | 仓库工具：`privacy_scan.py` 守门、`license_issuer.py` 发码 | 开发 |
+| `scripts/` | 发布运维：`bootstrap_github.py` 一键建仓与推送 | 维护者 |
+| `.github/` / `.githooks/` | CI 与 ISSUE/PR 模板、本地提交守门 | 维护者 |
 
 ## 🔐 安全与隐私
 

@@ -5,7 +5,7 @@
 #  kfcgame / pt2cloud 为可选组件，取消注释即可启用。
 #
 #  用法：
-#    cp ../config/.env.example ./ .env   （填入 DB_ROOT_PASSWORD 等）
+#    cp ../config/.env.example .env   （填入 DB_ROOT_PASSWORD 等）
 #    docker compose up -d
 #  飞牛 NAS 注意：若默认地址池耗尽，为自定义网络显式指定 subnet（见末尾）。
 # ==============================================================================
