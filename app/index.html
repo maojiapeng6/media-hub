@@ -20164,6 +20164,8 @@ async function renderAnnounce(){
 
   const a=d.data;
 
+  const GHCFG=(await apiGet('/api/gh/status',60000))||{};
+
   const meta=d.meta||{};
 
   const botSynced=meta.bot_synced!==false;
@@ -20242,6 +20244,12 @@ async function renderAnnounce(){
 
         <button class="btn sm" onclick="qpResetSync(this)" title="清除已展示版本记录，下次启动会重推一次">↩ 重置同步记录</button>
 
+        <button class="btn sm acc" onclick="ghPush(this)" title="把 NAS 发布源（/dockroot/openrepo）一键提交到 GitHub 仓库">🚀 同步 GitHub</button>
+
+        <button class="btn sm" onclick="ghRelease(this)" title="用版本号打 tag 并创建 GitHub Release">🏷 发布 Release</button>
+
+        <span class="sub" id="gh_state" style="margin-left:6px"></span>
+
       </div>
 
     </div>
@@ -20290,13 +20298,65 @@ async function renderAnnounce(){
 
       </div>
 
-    </div></div>`;
+    </div></div>
+
+    <div class="card cl-in" style="margin-top:16px">
+
+      <h3>🚀 GitHub 发布与同步</h3>
+
+      <div class="sub">把 NAS 发布源 <code>/dockroot/openrepo</code> 一键提交到你的 GitHub 仓库；Token 建议 Fine-grained PAT（只授目标仓库 Contents 读写）。Token 保存后不再回显。</div>
+
+      <div class="frm" style="margin-top:10px">
+
+        <div class="fld"><label><b>GitHub Token</b>（${esc(GHCFG.has_token?'已配置，留空 = 不修改':'未配置')}）</label><input id="gh_token" type="password" placeholder="${GHCFG.has_token?'••••••••（已保存）':'ghp_xxx / github_pat_xxx'}"></div>
+
+        <div class="fld"><label><b>仓库</b>（owner/name）</label><input id="gh_repo" value="${esc(GHCFG.repo||'')}" placeholder="yourname/media-hub"></div>
+
+        <div class="fld"><label><b>分支</b></label><input id="gh_branch" value="${esc(GHCFG.branch||'master')}" placeholder="master"></div>
+
+        <div class="fld"><label><b>PT 站点巡检清单</b>（逗号分隔域名；只探测首页，绝不试密）</label><input id="pt_sites" value="${esc(GHCFG.pt_sites||'')}" placeholder="zmpt.cc, nicept.net, kp.m-team.cc"></div>
+
+        <div class="fld"><label><b>AI 服务探测</b>（OpenAI 兼容 base 地址，留空跳过）</label><input id="ai_probe" value="${esc(GHCFG.ai_probe||'')}" placeholder="http://192.168.x.x:3065"></div>
+
+        <div class="acts" style="margin-top:8px">
+
+          <button class="btn sm acc" onclick="ghSaveCfg(this)">💾 保存发布配置</button>
+
+          <span class="sub" id="gh_state"></span>
+
+        </div>
+
+      </div>
+
+    </div>`;
 
   // 逐段淡入
 
   const nodes=v.querySelectorAll('.cl-in');
 
   nodes.forEach((n,i)=>{n.style.animationDelay=(i*0.09)+'s';});
+
+  ghState();  // GitHub 通道状态回显（v0.1.2）
+
+}
+
+async function ghSaveCfg(btn){
+
+  const g=(k)=>{const el=document.getElementById(k);return el?el.value.trim():''};
+
+  const cfg0={gh_repo:g('gh_repo'),gh_branch:g('gh_branch')||'master',pt_sites:g('pt_sites'),ai_probe:g('ai_probe')};
+
+  const tk=g('gh_token'); if(tk)cfg0.gh_token=tk;   // 留空=不修改已存 Token
+
+  if(btn){btn.disabled=true;}
+
+  const r=await apiPost('/api/config',{cfg:cfg0});
+
+  if(btn){btn.disabled=false;}
+
+  if(r&&r.ok){toast('✅ 发布配置已保存','ok');ghState();}
+
+  else toast('❌ 保存失败：'+((r&&r.msg)||''),'err');
 
 }
 
@@ -20349,6 +20409,70 @@ async function qpResetSync(btn){
   if(r&&r.ok){toast('✅ 同步记录已重置','ok');setTimeout(()=>{bust('/api/changelog');refreshCurrent();},800);}
 
   else{btn&&(btn.disabled=false);toast('重置失败','err');}
+
+}
+
+// ── 🚀 GitHub 同步 / 🏷 Release（v0.1.2：源树 = NAS /dockroot/openrepo，Git Data API 单 commit）──
+
+async function ghState(){
+
+  try{ const d=await apiGet('/api/gh/status',60000);
+
+    const el=document.getElementById('gh_state');
+
+    if(el) el.textContent = d&&d.configured
+
+      ? ('GitHub: '+d.repo+'（'+d.files+' 个源文件'+(d.remote&&d.remote.http===200?' · 仓库可达':' · 仓库不可达')+'）')
+
+      : 'GitHub 未配置（设置页「发布与同步」填 Token + 仓库）';
+
+  }catch(e){}
+
+}
+
+async function ghPush(btn){
+
+  const old=btn?btn.textContent:'';
+
+  if(!confirm('🚀 同步到 GitHub？\n\n把 NAS 发布源 /dockroot/openrepo 全量提交为一个 commit（未变更文件自动跳过，多余文件会删除）。\n确认仓库/分支配置无误？'))return;
+
+  if(btn){btn.disabled=true;btn.innerHTML='<span class="spin"></span>同步中…';}
+
+  const r=await apiPost('/api/gh/push',{message:''});
+
+  if(btn){btn.disabled=false;btn.textContent=old;}
+
+  if(r&&r.async&&r.job){ toast('同步已启动…','info');
+
+    const res=await pollJob(r.job);
+
+    if(res&&res.ok){ const s=res.stats||{}; toast('✅ '+res.msg+'（新增 '+s.add+' · 更新 '+s.upd+' · 未变 '+s.same+'）','ok',6000); resultPush('GitHub 同步',{结果:'✅',仓库:'',详情:res.url||res.msg}); }
+
+    else toast('❌ '+(res&&(res.msg||'同步失败')),'err',6000);
+
+  } else toast((r&&r.msg)?('❌ '+r.msg):'同步失败','err',6000);
+
+}
+
+async function ghRelease(btn){
+
+  const tag=prompt('🏷 Release 版本号（tag，如 v0.1.2）：');
+
+  if(!tag)return;
+
+  const name=prompt('Release 标题（留空用默认）：', '')||'';
+
+  if(!confirm('确认发布 Release '+tag+' ？\n\n将创建 tag 并发布 Release（正文默认引用 CHANGELOG）。'))return;
+
+  if(btn){btn.disabled=true;btn.innerHTML='<span class="spin"></span>发布中…';}
+
+  const r=await apiPost('/api/gh/release',{tag,name,body:''});
+
+  if(btn){btn.disabled=false;btn.textContent='🏷 发布 Release';}
+
+  if(r&&r.ok){toast('✅ '+r.msg,'ok');if(r.url)window.open(r.url,'_blank');}
+
+  else toast('❌ '+(r&&r.msg||'发布失败'),'err',6000);
 
 }
 

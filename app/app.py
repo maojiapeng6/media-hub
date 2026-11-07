@@ -1167,6 +1167,9 @@ SEC_ALLOW_NEW = [
     'cd2_addr', 'cd2_port', 'cd2_cname',
     'embyboss_addr', 'embyboss_port', 'embyboss_cname',
     'fs_addr', 'fs_port', 'fs_cname',
+    # ★ v0.1.2（2026-11-08）：GitHub 发布通道 + 巡检扩展配置
+    'gh_token', 'gh_repo', 'gh_branch',
+    'pt_sites', 'ai_probe',
     'pt2cloud_addr', 'pt2cloud_port', 'pt2cloud_cname',
     'kfcgame_addr', 'kfcgame_port', 'kfcgame_cname',
 ]
@@ -19428,6 +19431,197 @@ def changelog_reset_sync():
     return {'ok': False, 'msg': 'state.json 不可写'}
 
 
+# ══════════ GitHub 发布同步（2026-11-08 v0.1.2：设置页一键 push / Release） ══════════
+# 配置：webcfg.json 的 gh 段 {token, repo, branch} 或环境变量 GH_TOKEN / GH_REPO / GH_BRANCH
+#   repo 形如 "owner/name"；token 用 Fine-grained PAT（对目标仓库 Contents+Administration 写权限）
+# 原理：GitHub Git Data API 纯 HTTP（无需容器内 git）——
+#   本地树 → （sha1 比对，只传变更）blobs → tree → commit → 更新分支 ref，单 commit 干净入库
+# 源树：/dockroot/openrepo（NAS 发布源；开发机改动后需先同步到该目录）
+_GH_EXCLUDE_DIRS = {'.git', 'audit', '__pycache__', 'node_modules', '.venv', 'venv'}
+_GH_EXCLUDE_FILES = {'.privacy-hashes.txt', '.privacy-baseline.txt', '.license-ledger.json',
+                     '.vendor-secret.txt', '_smoke.log'}
+
+
+def _gh_cfg():
+    c = cfg()
+    token = str(c.get('gh_token') or os.environ.get('GH_TOKEN') or '').strip()
+    repo = str(c.get('gh_repo') or os.environ.get('GH_REPO') or '').strip().strip('/')
+    branch = str(c.get('gh_branch') or os.environ.get('GH_BRANCH') or 'master').strip()
+    root = str(os.environ.get('GH_SOURCE_ROOT') or '/dockroot/openrepo').rstrip('/')
+    return {'token': token, 'repo': repo, 'branch': branch, 'root': root,
+            'ok': bool(token and repo and '/' in repo)}
+
+
+def _gh_api(method, path, body=None, token='', t=25):
+    """GitHub REST v3 封装。走 TMDB 同款代理（api.github.com 直连多不通）。"""
+    import urllib.error
+    url = 'https://api.github.com' + path
+    data = json.dumps(body).encode() if body is not None else None
+    op = urllib.request.build_opener(urllib.request.ProxyHandler(
+        {'http': tmdb_proxy(), 'https': tmdb_proxy()}) if tmdb_proxy() else urllib.request.ProxyHandler({}))
+    req = urllib.request.Request(url, data=data, method=method, headers={
+        'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json',
+        'User-Agent': 'mediahub-release', 'Content-Type': 'application/json'})
+    try:
+        with op.open(req, timeout=t) as r:
+            raw = r.read()
+            return r.status, (json.loads(raw) if raw and raw[:1] in (b'{', b'[') else {})
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read() or b'{}')
+        except Exception:
+            return e.code, {}
+    except Exception as e:
+        return 0, {'message': str(e)}
+
+
+def _gh_blob_sha(data: bytes) -> str:
+    """git blob sha1（与 GitHub blob sha 一致），免 API 即可判断内容是否变更。"""
+    import hashlib
+    h = hashlib.sha1()
+    h.update(b'blob %d\x00' % len(data))
+    h.update(data)
+    return h.hexdigest()
+
+
+def _gh_tree_files(root):
+    """扫描发布源树 → {rel_path: abs_path}。排除隐私/构建产物。"""
+    out = {}
+    for r, dirs, fs in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in _GH_EXCLUDE_DIRS]
+        for fn in fs:
+            if fn in _GH_EXCLUDE_FILES or fn.endswith(('.pyc', '.db', '.log')):
+                continue
+            ap = os.path.join(r, fn)
+            rel = os.path.relpath(ap, root).replace('\\', '/')
+            out[rel] = ap
+    return out
+
+
+def gh_status():
+    g = _gh_cfg()
+    _c = cfg()
+    out = {'ok': True, 'configured': g['ok'], 'repo': g['repo'], 'branch': g['branch'],
+           'has_token': bool(g['token']), 'root': g['root'],
+           'pt_sites': str(_c.get('pt_sites') or ''), 'ai_probe': str(_c.get('ai_probe') or ''),
+           'root_exists': os.path.isdir(g['root']), 'files': 0, 'remote': None}
+    try:
+        files = _gh_tree_files(g['root']) if out['root_exists'] else {}
+        out['files'] = len(files)
+    except Exception:
+        pass
+    if g['ok']:
+        st, j = _gh_api('GET', '/repos/' + g['repo'], token=g['token'])
+        out['remote'] = {'http': st,
+                         'full_name': j.get('full_name'),
+                         'default_branch': j.get('default_branch'),
+                         'private': j.get('private'),
+                         'msg': j.get('message') if st not in (200, 301) else ''}
+        out['ok'] = (st == 200)
+    return out
+
+
+def gh_push(message=''):
+    """把发布源树整体提交为 GitHub 上一个 commit（sha1 比对跳过未变更文件）。"""
+    g = _gh_cfg()
+    if not g['ok']:
+        return {'ok': False, 'msg': 'GitHub 未配置：设置页填 Token + 仓库（owner/name）后再同步'}
+    if not os.path.isdir(g['root']):
+        return {'ok': False, 'msg': '发布源目录不存在：%s（先把 openrepo 同步到 NAS 该目录）' % g['root']}
+    files = _gh_tree_files(g['root'])
+    if not files:
+        return {'ok': False, 'msg': '发布源为空，放弃同步'}
+    msg = message or ('sync from NAS media-hub @ %s' % time.strftime('%F %T'))
+    # 1) 远端分支头
+    st, ref = _gh_api('GET', '/repos/%s/git/ref/heads/%s' % (g['repo'], g['branch']), token=g['token'])
+    head_sha = (ref.get('object') or {}).get('sha') if st == 200 else ''
+    base_tree = ''
+    if head_sha:
+        st2, cobj = _gh_api('GET', '/repos/%s/git/commits/%s' % (g['repo'], head_sha), token=g['token'])
+        base_tree = (cobj.get('tree') or {}).get('sha') if st2 == 200 else ''
+    # 2) 远端现有 tree 的 blob sha（免 API 判变更）
+    remote_blobs = {}
+    if base_tree:
+        st3, tr = _gh_api('GET', '/repos/%s/git/trees/%s?recursive=1' % (g['repo'], base_tree), token=g['token'])
+        if st3 == 200:
+            for it in (tr.get('tree') or []):
+                if it.get('type') == 'blob':
+                    remote_blobs[it['path']] = it['sha']
+    # 3) 本地内容 → 需上传清单
+    items, changed = [], {'add': 0, 'upd': 0, 'same': 0}
+    for rel, ap in sorted(files.items()):
+        try:
+            data = open(ap, 'rb').read()
+        except Exception:
+            continue
+        if len(data) > 90 * 1024 * 1024:
+            return {'ok': False, 'msg': '文件超过 GitHub 100MB 限制：%s' % rel}
+        sha = _gh_blob_sha(data)
+        if remote_blobs.get(rel) == sha:
+            items.append({'path': rel, 'mode': '100644', 'type': 'blob', 'sha': sha})
+            changed['same'] += 1
+            continue
+        b64 = base64.b64encode(data).decode()
+        stb, bj = _gh_api('POST', '/repos/%s/git/blobs' % g['repo'],
+                          {'content': b64, 'encoding': 'base64'}, token=g['token'])
+        if stb not in (200, 201):
+            return {'ok': False, 'msg': 'blob 上传失败 %s：%s' % (rel, (bj.get('message') or stb))}
+        items.append({'path': rel, 'mode': '100644', 'type': 'blob', 'sha': bj['sha']})
+        changed['add' if rel not in remote_blobs else 'upd'] += 1
+    # 删除远端多出的文件（源树为准）：base_tree 模式下 sha=None 显式删除
+    removed = [p for p in remote_blobs if p not in files]
+    if removed:
+        items += [{'path': p, 'mode': '100644', 'type': 'blob', 'sha': None} for p in removed]
+    stt, tj = _gh_api('POST', '/repos/%s/git/trees' % g['repo'],
+                      {'base_tree': base_tree or None, 'tree': items}, token=g['token'])
+    if stt not in (200, 201):
+        return {'ok': False, 'msg': '创建 tree 失败：%s' % (tj.get('message') or stt)}
+    stc, cj = _gh_api('POST', '/repos/%s/git/commits' % g['repo'],
+                      {'message': msg, 'tree': tj['sha'], 'parents': ([head_sha] if head_sha else [])},
+                      token=g['token'])
+    if stc not in (200, 201):
+        return {'ok': False, 'msg': '创建 commit 失败：%s' % (cj.get('message') or stc)}
+    if head_sha:
+        stu, uj = _gh_api('PATCH', '/repos/%s/git/refs/heads/%s' % (g['repo'], g['branch']),
+                          {'sha': cj['sha'], 'force': False}, token=g['token'])
+        if stu not in (200, 201):
+            return {'ok': False, 'msg': '更新分支失败（可能远端有新提交，稍后重试）：%s' % (uj.get('message') or stu)}
+    else:  # 空仓库首次推送：直接建分支引用
+        stn, nj = _gh_api('POST', '/repos/%s/git/refs' % g['repo'],
+                          {'ref': 'refs/heads/%s' % g['branch'], 'sha': cj['sha']}, token=g['token'])
+        if stn not in (200, 201):
+            return {'ok': False, 'msg': '首次建分支失败：%s' % (nj.get('message') or stn)}
+    sec_audit('admin', 'gh_push', g['repo'], 'ok:%s' % msg[:80])
+    return {'ok': True, 'msg': '已同步到 GitHub：%s@%s' % (g['repo'], g['branch']),
+            'commit': cj.get('sha'), 'url': cj.get('html_url'), 'stats': changed,
+            'removed_hint': len(removed), 'total_files': len(files)}
+
+
+def gh_release(tag=None, name=None, body=None):
+    """创建 GitHub Release（tag_name 缺省取 changelog 当前版本）。"""
+    g = _gh_cfg()
+    if not g['ok']:
+        return {'ok': False, 'msg': 'GitHub 未配置：设置页填 Token + 仓库后再发布'}
+    t = str(tag or '').strip()
+    if not t:
+        try:
+            ver = str(changelog_get().get('version') or '').strip()
+        except Exception:
+            ver = ''
+        t = ver if ver.startswith('v') else ('v' + ver if ver else '')
+    if not t:
+        return {'ok': False, 'msg': '无法确定版本号：请显式传 tag，或先在版本公告里写好版本'}
+    n = str(name or ('MediaHub ' + t))
+    b = str(body or ('Release ' + t + '\n\n见 CHANGELOG.md'))
+    sts, sj = _gh_api('POST', '/repos/%s/releases' % g['repo'],
+                      {'tag_name': t, 'name': n, 'body': b, 'target_commitish': g['branch']},
+                      token=g['token'])
+    if sts not in (200, 201):
+        return {'ok': False, 'msg': 'Release 创建失败：%s' % (sj.get('message') or sts)}
+    sec_audit('admin', 'gh_release', g['repo'], 'ok:%s' % t)
+    return {'ok': True, 'msg': 'Release %s 已发布' % t, 'url': sj.get('html_url'), 'tag': t}
+
+
 def _e(s):
     return str(s).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
@@ -20746,6 +20940,118 @@ def deep_check():
                      'fix': i.get('fix_label') or ''}
                     for i in items if i['level'] in ('bad', 'warn') and i.get('key') != 'auto_throttle']
 
+
+    # ── 7. 商业化服务栈（2026-11-08：机器人容器 / MySQL / PT 站点 / AI 服务 / GitHub）──
+    # 7.1 业务机器人容器运行状态（积分/求片/保号链路是否活着）
+    for _cn in ('kfcgame', 'embyboss', 'pt2cloud'):
+        try:
+            _cs = ctr_state(_cn)
+        except Exception:
+            _cs = {'ok': False, 'state': 'unknown'}
+        if _cs.get('running'):
+            _h = _cs.get('health')
+            add('bot_' + _cn, '容器 ' + _cn, 'ok',
+                '运行中%s · 自 %s · 重启 %s 次' % (
+                    (' · 健康检查 ' + str(_h)) if _h else '',
+                    _cs.get('started') or '?', _cs.get('restarts') or 0))
+        else:
+            add('bot_' + _cn, '容器 ' + _cn, 'bad',
+                '未运行（状态: %s）——对应机器人/链路已停摆' % (_cs.get('state') or '未知'),
+                ['「📦 容器」页启动 %s，或 SSH: sudo docker start %s' % (_cn, _cn),
+                 '若反复退出：看容器日志定位（docker logs --tail 100 %s）' % _cn])
+
+    # 7.2 MySQL（pt2cloud 库连通 + 表数量）
+    try:
+        import pymysql as _pym
+        _db = _pt_db() or {}
+        if _db.get('host'):
+            try:
+                _conn = _pym.connect(host=_db['host'], port=int(_db.get('port') or 3306),
+                                     user=_db.get('user') or '', password=_db.get('password') or '',
+                                     database=_db.get('db') or 'pt2cloud', connect_timeout=4)
+                _cur = _conn.cursor()
+                _cur.execute("SELECT COUNT(*) FROM information_schema.tables "
+                             "WHERE table_schema=%s", (_db.get('db') or 'pt2cloud',))
+                _ntb = (_cur.fetchone() or [0])[0]
+                _conn.close()
+                add('mysql', 'MySQL（%s）' % _db['host'], 'ok' if _ntb else 'warn',
+                    '连接正常 · 库 %s 有 %s 张表' % (_db.get('db'), _ntb),
+                    [] if _ntb else ['库为空：pt2cloud 建表流程未跑或连错库'])
+            except Exception as _me:
+                add('mysql', 'MySQL（%s）' % _db['host'], 'bad',
+                    '连接失败：%s' % str(_me)[:120],
+                    ['检查 compose 的 PTDB_* 环境变量与 MySQL 容器网络'])
+        else:
+            add('mysql', 'MySQL', 'warn', '未配置（PTDB_HOST 为空）',
+                ['设置页/compose 配置 PTDB_HOST/USER/PASS 后可监控数据库'])
+    except ImportError:
+        add('mysql', 'MySQL', 'warn', '容器缺 pymysql，跳过检测（镜像内 pip install pymysql 后生效）', [])
+
+    # 7.3 PT 站点连通性（只探测首页可达性，绝不发登录/试密——部分站试密即封 IP）
+    try:
+        _sites = [s.strip() for s in str((cfg().get('pt_sites') or '')).replace('，', ',').split(',') if s.strip()]
+    except Exception:
+        _sites = []
+    if _sites:
+        import urllib.error as _ue
+        _res = []
+        for _dm in _sites[:12]:
+            _u = 'https://' + _dm if '://' not in _dm else _dm
+            try:
+                _op = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # 直连（保号同款）
+                _op.open(urllib.request.Request(_u, headers={'User-Agent': 'Mozilla/5.0'}), timeout=8)
+                _res.append((_dm, 'ok', ''))
+            except _ue.HTTPError as _he:
+                # 403/429/503=CF 挑战或限流（站点活着）；其余 4xx/5xx 按状态定性
+                _res.append((_dm, 'warn' if _he.code in (403, 429, 503) else 'bad', 'HTTP %s' % _he.code))
+            except Exception as _pe:
+                _res.append((_dm, 'bad', str(_pe)[:60]))
+        _nb = [r for r in _res if r[1] == 'bad']
+        _nw = [r for r in _res if r[1] == 'warn']
+        add('pt_sites', 'PT 站点连通（%d 站，仅首页探测）' % len(_res),
+            'bad' if len(_nb) >= max(2, len(_res) // 2) else ('warn' if (_nb or _nw) else 'ok'),
+            ' · '.join('%s %s%s' % (d, '✓' if s == 'ok' else ('⚠' if s == 'warn' else '✗'), ('(' + m + ')') if m else '')
+                       for d, s, m in _res),
+            ([] if not _nb else ['不通的站点先查本机网络/代理；仅个别站不通多为站点侧问题',
+                                 '⚠ 全程只 GET 首页，绝不带凭据试密（部分站试密即封 IP）']))
+    else:
+        add('pt_sites', 'PT 站点连通', 'warn', '未配置站点清单（webcfg 的 pt_sites，逗号分隔域名）',
+            ['设置页填入你的 PT 站域名即可开启检测（只探测首页，不含登录）'])
+
+    # 7.4 AI 服务探测（可选：webcfg 的 ai_probe 填 OpenAI 兼容 base，如 http://x:3065）
+    _ai = str(cfg().get('ai_probe') or '').strip()
+    if _ai:
+        _au = _ai.rstrip('/') + ('/v1/models' if '/v1/' not in _ai else '/models')
+        try:
+            _r = urllib.request.urlopen(urllib.request.Request(_au, headers={'User-Agent': 'mediahub'}), timeout=8)
+            _j = json.loads(_r.read()[:2000] or b'{}')
+            _n = len((_j.get('data') or []))
+            add('ai_probe', 'AI 服务（%s）' % _au, 'ok', 'HTTP %s · 可见模型 %s 个' % (_r.status, _n or '?'))
+        except Exception as _ae:
+            add('ai_probe', 'AI 服务（%s）' % _au, 'bad', '探测失败：%s' % str(_ae)[:120],
+                ['确认服务在线/端口/路径；需鉴权的服务 401 也算「活着」'])
+    else:
+        add('ai_probe', 'AI 服务探测', 'warn', '未配置（webcfg 的 ai_probe，填 OpenAI 兼容服务 base 地址）', [])
+
+    # 7.5 GitHub 发布通道
+    try:
+        _g = _gh_cfg()
+        if _g['ok']:
+            _st, _rj = _gh_api('GET', '/repos/' + _g['repo'], token=_g['token'], t=12)
+            if _st == 200:
+                add('gh', 'GitHub（%s）' % _g['repo'], 'ok',
+                    'Token 有效 · 仓库可达（%s · 默认分支 %s）' % ('私有' if _rj.get('private') else '公开', _rj.get('default_branch')))
+            elif _st == 401:
+                add('gh', 'GitHub（%s）' % _g['repo'], 'bad', 'Token 无效/过期（401）', ['设置页更新 GitHub Token'])
+            elif _st == 404:
+                add('gh', 'GitHub（%s）' % _g['repo'], 'bad', '仓库不存在或 Token 无该仓库权限（404）', ['确认 owner/name 拼写与 Token 授权范围'])
+            else:
+                add('gh', 'GitHub（%s）' % _g['repo'], 'warn', '探测 HTTP %s（代理/网络抖动可重试）' % _st, [])
+        else:
+            add('gh', 'GitHub 发布通道', 'warn', '未配置（设置页 gh 段：Token + 仓库 owner/name）',
+                ['配置后版本公告区「🚀 同步 GitHub」一键发布；源树 = NAS /dockroot/openrepo'])
+    except Exception:
+        pass
 
     bad = sum(1 for i in items if i['level'] == 'bad')
     warn = sum(1 for i in items if i['level'] == 'warn')
@@ -24392,6 +24698,8 @@ class H(BaseHTTPRequestHandler):
         if p == '/api/deep':
             return self._j(cached('deep', deep_check,
                                   force=(q1('force', '0') == '1')))
+        if p == '/api/gh/status':
+            return self._j(gh_status())
         if p == '/api/submgmt':
             return self._j(cached('submgmt', submgmt_list,
                                   ttl=15, force=(q1('force', '0') == '1')))
@@ -25340,6 +25648,19 @@ class H(BaseHTTPRequestHandler):
             jid = submit('heal:' + a, lambda: _logged_heal(a))
             return self._j({'ok': True, 'async': True, 'job': jid,
                              'msg': '已提交：%s' % a})
+        if u.path == '/api/gh/push':
+            # 登录闸：推送仓库属于管理动作
+            _gs = sec_session(sec_token_from_headers(self.headers))
+            if not _gs:
+                return self._j({'ok': False, 'msg': '未登录', 'code': 401}, 401)
+            jid = submit('gh.push', lambda: gh_push(str(b.get('message') or '')))
+            return self._j({'ok': True, 'async': True, 'job': jid, 'msg': 'GitHub 同步已启动…'})
+        if u.path == '/api/gh/release':
+            _gs = sec_session(sec_token_from_headers(self.headers))
+            if not _gs:
+                return self._j({'ok': False, 'msg': '未登录', 'code': 401}, 401)
+            return self._j(gh_release(str(b.get('tag') or ''), str(b.get('name') or ''),
+                                      str(b.get('body') or '')))
         if u.path == '/api/deep/autofix':
             jid = submit('autofix', lambda: _logged_autofix())
             return self._j({'ok': True, 'async': True, 'job': jid, 'msg': '全自动修复已启动…'})

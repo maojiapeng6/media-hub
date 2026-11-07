@@ -5,9 +5,23 @@
 ## [Unreleased]
 
 ### Planned
-- 多实例服务注册表实施（P3-1~P3-5，见 docs/multi-instance-design.md）
 - 业务写端点强制登录（G1）
 - 首次配置向导对齐 services.json
+- 发布副本与线上（v0.1.3 多实例已上线）的代码级全量同步评估
+
+## [0.1.5] - 2026-11-08 · 面板 GitHub 发布通道 + 巡检第 7 段
+
+### Added
+- **🚀 同步 GitHub（面板按钮）**：版本公告页一键把 NAS 发布源（`/dockroot/openrepo`，本仓库的 NAS 侧副本）提交到 GitHub——Git Data API 纯 HTTP 单 commit（无容器内 git 依赖）、blob sha1 本地比对跳过未变更、`sha:null` 显式删除远端多余文件、走既有代理。
+  与 `scripts/bootstrap_github.py`（本地建仓+首推）互补：建仓一次，日常同步靠面板。
+- **🏷 发布 Release（面板按钮）**：版本号打 tag + 创建 Release（tag 缺省取版本公告版本）。
+- **「🚀 GitHub 发布与同步」配置卡**：Token（保存后不回显）/仓库/分支/PT 站点清单/AI 服务地址，走 `/api/config`（`gh_*`/`pt_sites`/`ai_probe` 进 SEC_ALLOW_NEW）。
+- **深度巡检第 7 段「商业化服务栈」**：机器人容器运行态（kfcgame/embyboss/pt2cloud，健康检查+重启计数）、MySQL 连通+表数、PT 站点首页连通（**只 GET 首页绝不试密**，403/429/503 判 CF 挑战而非宕机）、AI 服务 /v1/models、GitHub 通道可达性。
+- `GET /api/gh/status`、`POST /api/gh/push`（登录闸+异步 job）、`POST /api/gh/release`（登录闸）。
+- `docs/security.md` 安全部署清单；`AGENTS.md` AI 协作规范（随仓库分发，任何 AI 助手开工必读）。
+
+### Fixed
+- 面板 `apiPost` 无超时问题同步上线（线上原为裸 fetch，后端挂起时按钮永久转圈）。
 
 ## [0.1.4] - 2026-11-06 · GitHub 仓库分类规范 + 一键建仓发布
 
