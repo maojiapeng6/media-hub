@@ -9,6 +9,29 @@
 - 首次配置向导对齐 services.json
 - 发布副本与线上（v0.1.3 多实例已上线）的代码级全量同步评估
 
+## [0.1.6] - 2026-11-08 · 媒体库「缺失封面扫描 + 一键补齐」
+
+> 线上 media-hub V1.47c 已实机验收；发布副本提供零凭据参考实现与文档，
+> 不整文件覆盖线上真源（ROADMAP §2/§5 隐私红线）。
+
+### Added
+- **媒体库页新模块「🖼 缺失封面扫描与补齐」**：扫描 Emby `ImageTags.Primary` 为空的 Movie/Series → 按 TMDB ID 抓官方海报 → **写进 Emby 媒体库本体**（`POST /Items/{Id}/Images/Primary`）→ 回读校验。Emby 原生 UI 与全部客户端立即生效。
+- 线上新增 6 个端点：`GET /api/cover/servers|scan|status`、`POST /api/cover/scan_async|fix`（写端点走既有授权闸 `sec_write_gate`），补齐走异步 job + 进度查询。
+- 前端支持：实例下拉（**自动派生，新增媒体服务器无需改代码**）、最近 1000 / 5000 / 全库、试运行（dry，绝不写库）、全选 / 单张补、匹配来源与失败原因展示、进度轮询。
+- **`app/cover_repair.py`**：零凭据、纯标准库、回调注入的参考实现（`scan_missing` / `find_poster` / `repair` / `encode_for_emby`）。
+- **`tests/test_cover_repair.py`**：16 项单测全绿（分页、Primary 判定、不跨类型回退、多语言海报集、严格/宽松片名匹配、试运行不写库、上传编码与失败计数）。
+- **`docs/cover-repair.md`**：处理链路、匹配红线、API 契约、配置要求、已知边界、实机验收记录。
+
+### Fixed
+- 🔴 **误补海报**：TMDB `movie` / `tv` 是独立 ID 空间，旧逻辑「movie 无海报 → 回退 tv/{同 ID}」会把别的作品海报写进媒体库。改为严格同类型；无图则标注原因不写库（宁缺勿错），误补图片已从线上删除。
+- Emby 4.10 图片上传端点须提交 **base64 文本** + `application/octet-stream`；直接 POST 二进制会返回 204 但 `ImageTags` 仍为空 → 现按 Swagger 定义封装并在写入后回读校验。
+- 宽松匹配被采纳时正确标注「需人工核对」（单测驱动修复，参考实现与线上一致）。
+
+### Notes
+- 实机：最近 5000 条共 73 条缺封面 → 63 张成功写入 → 10 条 TMDB 本身无图（演唱会 / 古典现场等，系统标明原因）；连同前序批次 **共补 79 张**，复扫误补 0、已补条目跨重启保持。
+- 与 9kg 域「缺图重读」职责互补：后者只重读本地已有图片，本模块负责「本地根本没图」的 strm 新片。
+- push 仍待 GitHub 授权（本机无 token / SSH / 连接器），存档 commit + tag 已完成。
+
 ## [0.1.5] - 2026-11-08 · 面板 GitHub 发布通道 + 巡检第 7 段
 
 ### Added
