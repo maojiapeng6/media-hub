@@ -30,19 +30,19 @@ docker compose -f deploy/docker-compose.yml up -d
 # 浏览器打开 http://<你的NAS_IP>:5678 → 首次进入配置向导
 ```
 
-> 详细部署见 [`docs/`](docs/)：[快速开始](docs/quickstart.md) · [架构图](docs/architecture.md) · [常见问题](docs/faq.md) · [多实例运行时](docs/multi-instance-runtime.md)
+> 详细部署见 [`docs/`](docs/)：[快速开始](docs/quickstart.md) · [架构图](docs/architecture.md) · [常见问题](docs/faq.md) · [多实例运行时](docs/multi-instance-runtime.md) · [内存预警](docs/memguard.md) · [缺失封面补齐](docs/cover-repair.md)
 > 维护者请看：[仓库分类地图](docs/repo-layout.md) · [发布上线手册](docs/publish-checklist.md)
 
 ## 🗂️ 仓库结构（分类地图）
 
 ```
 media-hub/
-├── app/                 # ✅ 核心：总控台后端 app.py + 前端 index.html + 多实例参考实现
+├── app/                 # ✅ 核心：app.py + index.html + 多实例/封面补齐/内存预警零凭据参考实现
 ├── bots/                # 可选模块：kfcgame / pt2cloud / embyboss
 ├── config/              # 配置模板：.env.example / services.json.example（只放 .example）
 ├── deploy/              # docker-compose.yml 全栈编排
-├── docs/                # 文档：quickstart / architecture / multi-instance-* / faq / publish-checklist / repo-layout
-├── tests/               # test_*.py，纯标准库
+├── docs/                # 文档：quickstart / architecture / multi-instance-* / cover-repair / memguard / faq / publish-checklist / repo-layout
+├── tests/               # test_*.py，纯标准库（51 项，含封面补齐与内存预警）
 ├── tools/               # 仓库工具：privacy_scan.py 守门、license_issuer.py 发码
 ├── scripts/             # 发布运维：bootstrap_github.py 一键建仓 + 分类 + push + Release
 ├── .github/             # CI workflows + ISSUE/PR 模板

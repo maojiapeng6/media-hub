@@ -7,7 +7,7 @@
 
 | 目录 | 职责 | 是否发布 | 备注 |
 |---|---|---|---|
-| `app/` | **核心**：MediaHub 总控台运行时（后端 `app.py`、前端 `index.html`、Dockerfile、多实例参考实现） | ✅ | 唯一必装组件；零第三方依赖 |
+| `app/` | **核心**：MediaHub 总控台运行时（后端 `app.py`、前端 `index.html`、Dockerfile、多实例 / 封面补齐 / 内存预警零凭据参考实现） | ✅ | 唯一必装组件；零第三方依赖 |
 | `bots/` | **可选模块**：按机器人/服务名分子目录 | ✅ | `kfcgame` / `pt2cloud` / `embyboss` |
 | `config/` | **配置模板**：只放 `*.example`，绝不放实体配置 | ✅ | `.env.example`、`services.json.example` |
 | `deploy/` | **部署编排**：`docker-compose.yml`、安装脚本 | ✅ | compose 读取 `config/.env.example` 的键 |
