@@ -117,8 +117,18 @@ class Quark2Five(object):
             self.tmp_dir,
             "q2f_" + hashlib.md5(item["rel"].encode("utf-8")).hexdigest()[:12] + ".part")
         dst = os.path.join(self.cd2_dir, item["rel"])
-        if os.path.exists(dst) and os.path.getsize(dst) == item["size"]:
-            return True, "已存在（跳过）"
+        if os.path.exists(dst):
+            try:
+                cur = os.path.getsize(dst)
+            except Exception:
+                cur = -1
+            if cur == item["size"]:
+                return True, "已存在（跳过）"
+            # 自愈：落地文件不完整（复制/上传被中断）→ 删除后重传
+            try:
+                os.remove(dst)
+            except Exception as e:
+                return False, "不完整文件无法移除: %s" % str(e)[:70]
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         try:
             req = urllib.request.Request(raw, headers={"User-Agent": "quark2five/1.0"})
@@ -129,6 +139,16 @@ class Quark2Five(object):
                 os.remove(part)
                 return False, "下载大小不符 %d/%d" % (got, item["size"])
             shutil.move(part, dst)
+            try:
+                final = os.path.getsize(dst)
+            except Exception:
+                final = -1
+            if item["size"] > 0 and final != item["size"]:
+                try:
+                    os.remove(dst)
+                except Exception:
+                    pass
+                return False, "落地大小不符 %d/%d（已移除，下轮自动重传）" % (final, item["size"])
             return True, "已投递落地目录"
         except Exception as e:
             try:
