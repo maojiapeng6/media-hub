@@ -20,8 +20,35 @@
   2. 秒传：115 只在云端已存在相同 SHA1 时成立；夸克与 115 哈希库不共享，
      因此本实现走「下载 → 落地」的可靠路径，不假设跨盘秒传。
   3. 按 (相对路径, 大小) 去重；状态落盘，进程重启后可继续未完成的条目。
+  4. V1.51 队列化：状态机 / 优先级 / 进度采样 / ETA / 手动勾选 / 取消 / 暂停 / 设置。
 """
 import hashlib
+
+# V1.51 队列条目的标准字段（发布副本与线上契约一致，便于对接面板）
+ITEM_FIELDS = ("rel", "size", "sha1", "status", "progress", "bytes_xfer", "speed",
+               "eta", "priority", "retry", "manual", "rapid", "queued_ts",
+               "started", "finished", "duration", "msg")
+
+
+def estimate_eta(remain_bytes, current_speed, avg_speed=0):
+    """总体 ETA（秒）：优先实时速率，空闲时回退历史平均速率；0 表示无法估算。
+
+    与线上 V1.51 口径一致：队列非空但无正在运行的任务时，用历史平均速率估算，
+    避免界面显示「—」。调用方负责把秒格式化成「X 分钟 / X 小时」。
+    """
+    speed = current_speed if current_speed > 0 else avg_speed
+    if speed <= 0 or remain_bytes <= 0:
+        return 0
+    return round(remain_bytes / float(speed), 1)
+
+
+def item_progress(item):
+    """单文件进度百分比（0-100），兼容缺字段的旧状态文件。"""
+    size = item.get("size") or 0
+    if size <= 0:
+        return 0
+    return round(min(100.0, (item.get("bytes_xfer") or 0) * 100.0 / size), 1)
+
 import json
 import os
 import shutil
