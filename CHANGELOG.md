@@ -2,6 +2,39 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号采用 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.4] - 2026-11-11 · M-Team JWT 全自动自愈（线上热修）
+
+### Added
+- **Web 端「馒头鉴权 · 自动守护」浮窗**：实时显示 JWT 状态 / 当前令牌头 /
+  最近生效时间 / 保号 Bot 告警 / 自愈看门狗在线状态，15s 自动刷新，
+  提供「立即自愈」按钮（触发后端 autoheal，无需 F12 或手工复制令牌）。
+- **三层自愈链路**：NAS 侧 90s 巡检（CookieCloud）→ 本机常驻看门狗 60s 巡检
+  （浏览器 Local Storage 只读）→ 兜底用浏览器**已保存凭据**静默重登并回写。
+  全程零人工；密码只由浏览器原生 autofill 填入，脚本不读取/打印/落盘密码，
+  也不开启网络抓包。
+- **状态与协同接口**：`/api/mteam/status`、`/api/mteam/autoheal`、
+  `/api/mteam/recover/{trigger,flag,done,heartbeat}`，统一 POST 分发。
+
+### Fixed
+- **协同标志被保号 Bot 覆盖**：心跳/触发/完成标志原写在 Bot 的 `state.json`，
+  `/api/ka/sync` 触发 Bot 立即探测时会被整体重写冲掉（看门狗假离线、触发丢失）。
+  改为独立 `/data/mteam_recover.json`；实测同步后标志与在线状态均完整保留。
+- **autoheal 误报**：CookieCloud 无有效 auth 但本地 JWT 正常时曾返回
+  「已从 CookieCloud 恢复」；改为只有实测通过才记为 CC 恢复。
+- **新版 Edge 默认 profile 禁用远程调试**：改用目录联接（junction）指向真实
+  profile 启动离屏实例，既满足 CDP 端口要求，又保留 app-bound 凭据的原生
+  autofill 能力；实测端口 1s 内就绪、autofill 成功。
+- **会话复用不校验**：浏览器里持久化的旧 JWT 可能已被撤销，现改为
+  「复用 → 后端实测 → 失效则清旧态强制重登」闭环，避免拿到 401 令牌误判成功。
+
+### Notes
+- 线上真源按红区流程增量补丁 + 保 inode 回写（inode 不变），容器内
+  `py_compile` 通过并重启实测；Web 浮窗与全部接口实机验证在线。
+- **已知站点侧限制**：M-Team 登录返回「需要兩步驗證」时，验证码需从绑定邮箱
+  获取。若未配置邮箱自动读取能力，本次恢复需完成一次带验证码的登录；
+  登录成功后 CookieCloud / 看门狗会自动同步，此后无需任何人工操作。
+- 本条为线上运行时热修记录；发布副本保持零凭据，代码级同步另行评估。
+
 ## [Unreleased]
 
 ### Planned
