@@ -311,6 +311,32 @@ SITES: list[dict] = [
             "认领达标：每月做种≥300 小时 或 上传量≥体积 5 倍（达标魔力 2 倍）",
         ],
     },
+    {
+        "id": "cspt",
+        "name": "CSPT",
+        "sym": "🆕",
+        "home": "https://cspt.top",
+        "rules_url": "https://cspt.top/rules.php",
+        "kind": "NexusPHP",
+        "need_own_115": True,
+        "req": {
+            "login_days": 30,
+            "sealed_login_days": 365,
+            "no_traffic_days": 7,
+            "login_interval": 15,
+            "login_mode": "http",
+            "min_ratio": 1.0,
+            "hr_desc": "规则待核实：CSPT 为 2026-11 新接入站，请于站点规则页确认 H&R / 做种要求",
+            "newbie": "新站接入，规则待核实；建议尽快产生上传/下载流量以避免无流量删号",
+            "invite_level": "待核实",
+            "invite_rule": "待核实：邀请名额由站点按等级发放",
+            "invite_note": "CSPT 2026-11 新接入，规则以站点官方页面为准",
+        },
+        "rules": [
+            "规则待核实：CSPT 为新接入 PT 站，请于 https://cspt.top/rules.php 核对登录/留存/邀请规则",
+            "建议保持定期登录与做种，避免无流量账号被清理",
+        ],
+    },
 ]
 
 SITES_BY_ID = {s["id"]: s for s in SITES}
