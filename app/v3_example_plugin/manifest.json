@@ -1,0 +1,43 @@
+{
+  "plugin_id": "heartbeat_demo",
+  "name": "心跳演示插件",
+  "version": "1.0.0",
+  "author": "KFC Media Hub 官方",
+  "description": "内置示例：验证插件运行时（进程隔离/日志/配置/KV/事件/服务读取），不改变任何业务状态。",
+  "min_host_version": "3.0.0",
+  "max_host_version": "9.9.9",
+  "entrypoint": "plugin.py",
+  "category": "系统工具",
+  "license": "MIT",
+  "dependencies": [],
+  "permissions": [
+    "log.write",
+    "config.read",
+    "kv.read",
+    "kv.write",
+    "event.publish",
+    "event.subscribe",
+    "service.read"
+  ],
+  "configuration_schema": {
+    "interval": {"type": "number", "label": "心跳间隔(秒)", "default": 30, "min": 5, "max": 3600}
+  },
+  "navigation": [
+    {"id": "v3_heartbeat", "name": "心跳演示", "icon": "💓", "page": "plugin:heartbeat_demo"}
+  ],
+  "dashboard_widgets": [
+    {"id": "heartbeat_status", "title": "插件心跳", "type": "stat", "source": "plugin_kv:heartbeat_count"}
+  ],
+  "capabilities": ["plugin_heartbeat"],
+  "event_subscriptions": [
+    {"event_type": "plugin.heartbeat", "description": "演示插件心跳事件"}
+  ],
+  "background_tasks": [
+    {"id": "heartbeat_loop", "type": "persistent", "description": "常驻心跳循环"}
+  ],
+  "api_routes": [],
+  "lifecycle_hooks": {
+    "on_enable": "sdk.log('enabled')",
+    "on_disable": "sdk.log('disabled')"
+  }
+}
