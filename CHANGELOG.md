@@ -2,6 +2,44 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号采用 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.7] - 2026-11-12 · 馒头守护浮窗「报错弹窗关不掉」修复 + 自愈链路死锁修复
+
+### Fixed
+- **「报错弹窗一直关不掉」根因**：自愈浮窗 `#mtj-box` 的 `z-index:99990` 压过页面
+  所有 `.modal`（`9998`），且固定在右下角，正好盖住报错弹窗的「关闭」按钮
+  （实机 `elementFromPoint` 命中浮窗而非按钮）。降为 `900`，并在任何 modal 出现时
+  自动收起浮窗、弹窗关闭后恢复。
+- 浮窗新增真正的 **× 关闭按钮** + 右下角小徽标重新打开 + `localStorage` 记忆关闭状态；
+  Esc 关闭浮窗 / 最上层 modal，遮罩空白点击关闭，所有动态 modal 幂等注入通用 ×。
+- **自激死循环**（本轮自身引入后立即修掉）：`MutationObserver` 回调内改 class /
+  `appendChild` 会再次触发观察者 → 页面 JS 线程卡死、CDP evaluate 全部超时。
+  改为纯 `setInterval` 轮询，零重入风险。
+- 状态文案降噪：失效态「已失效 · 自愈中」→「自动恢复中」，红色长错误文案收敛为
+  「有告警 · 守护处理中」，接口异常不再反复刷红。
+- **看门狗在用户 Edge 运行时永久跳过自愈**：junction 会复用用户进程导致 CDP 端口
+  起不来。改为「完整复制的独立 profile 副本」并发启动（只读真实凭据库，
+  绝不关闭 / 抢占 / 重启用户浏览器），实测 Edge 157 下 1s 就绪、原生凭据 autofill 成功。
+- **复用失败不强登**：`mteam_relogin.py` 旧逻辑只在 `--force-login` 时重登，而看门狗
+  不带该参数 → L3 只会复用旧会话。改为「复用实测失败自动强制重登」，零人工。
+- **200s 超时截断**：clone 启动 + 页面加载 + autofill + 四种提交实测需 3~5 分钟，
+  放宽到 420s（原日志出现「CDP 重登超时」被截断）。
+
+### 实测
+- 线上 `index.html` 三道增量补丁：锚点断言唯一、CRLF 严格保留、保 inode `19633061`；
+  首道仅末尾 4KB 变化，198 万字节前缀逐字节一致。
+- CDP 真机验收：浮窗 `z-index=900`、modal 出现时 `float_hidden=true`、通用 × 存在、
+  关闭按钮 `close_btn_clickable=true`、点 × 后 `CLOSED`、浮窗自动恢复 `hidden=false`。
+- 保号接口 `GET /api/ka/sites` 9/9；看门狗计划任务 Running、单实例锁 45671、心跳在线。
+
+### 已知外部约束（非本仓缺陷，未解决）
+- M-Team 站点 `/api/login` 稳定返回
+  `{"code":1001,"message":"需要兩步驗證驗","data":["email"]}`，强制邮箱验证码。
+  已逐一排除：CookieCloud 无 `auth`、LevelDB 无 M-Team HS512 JWT、QQ 邮箱网页未登录、
+  工作区无 IMAP 授权码、注入受信任 `did`/`visitorId` 无效、切换 `zp.m-team.io` 亦被挡、
+  secrets 与 CC 指纹组合三种均 401。JWT 当前 `probe:true` = `401 Access Denied`。
+- 看门狗保持 60s 巡检 + 5min 冷却自动重试（历史上站点曾短暂放行并自动恢复成功）；
+  若需稳定零介入，需绑定邮箱 IMAP 授权码让看门狗自动读取验证码。
+
 ## [0.2.6] - 2026-11-12 · Emby 故障检修「精密控制台」（双实例 / 三端同查 / 精确刷新）
 
 ### Added
