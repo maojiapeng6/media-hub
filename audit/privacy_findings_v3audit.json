@@ -1,0 +1,552 @@
+{
+  "summary": {
+    "files_scanned": 182,
+    "total_findings": 59,
+    "by_severity": {
+      "MED": 57,
+      "HIGH": 1,
+      "CRIT": 1
+    },
+    "by_rule": {
+      "PRIV-STRM": 56,
+      "PRIV-IP2": 1,
+      "PRIV-IP": 1,
+      "PRIV-HASH": 1
+    },
+    "blocking": 2,
+    "errors": []
+  },
+  "findings": [
+    {
+      "file": ".\\CHANGELOG.md",
+      "line": 268,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/CloudNAS/115open",
+      "ctx": "（CD2 `/CloudNAS/115open/待整理/转换/夸克`、MT `/主号/待整理/转换/夸克`），"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 27,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/CloudNAS/115open",
+      "ctx": "MOUNT = os.environ.get('MT_MOUNT', '/CloudNAS/115open')"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 36,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/vol1/1000",
+      "ctx": "CD2_CFG = os.environ.get('CD2_CFG', '/vol1/1000/docker/clouddrive2/config/cloudapidata.json')"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 257,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/CloudNAS/115open",
+      "ctx": "\\u800c\\u547d\\u540d/\\u6574\\u7406\\u4efb\\u52a1\\u4e0a\\u4f20\\u7684\\u53ef\\u80fd\\u662f /\\u4e3b\\u53f7/\\u2026 \\u6216 /CloudNAS/115open/\\u2026\\uff09\\uff1a"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 258,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/CloudNAS/115open",
+      "ctx": "/\\u4e3b\\u53f7/A/B      \\u2192 /CloudNAS/115open/A/B"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 259,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/CloudNAS/115open",
+      "ctx": "/115open/A/B        \\u2192 /CloudNAS/115open/A/B   \\u2190 \\u4fee\\u590d\\u300c\\u6e90\\u76ee\\u5f55\\u4e0d\\u5b58\\u5728\\u300d\\u7684\\u6839\\u56e0"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 260,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/CloudNAS/115open",
+      "ctx": "/CloudNAS/115open/A/B \\u2192 \\u539f\\u6837"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 261,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/CloudNAS/115open",
+      "ctx": "A/B                \\u2192 /CloudNAS/115open/A/B"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 2664,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/CloudNAS/115open",
+      "ctx": "#   宿主机挂载路径 /CloudNAS/115open/未识别/...，而 MT 的 sourceDir 必须是"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 3026,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/vol1/1000",
+      "ctx": "'/vol1/1000/docker/clouddrive2/config/cloudapidata.json',"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 5787,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/CloudNAS/115open",
+      "ctx": "#      或 /CloudNAS/115open/主号/待整理/PT），传子目录会被拒（\"保存路径不在"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 6317,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/vol1/1000",
+      "ctx": "'/vol1/1000/docker/clouddrive2/config/cloudapidata.json',"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 6698,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/vol1/1000",
+      "ctx": "vdir 为本地挂载路径（/vol1/1000/CloudNAS/115open/...）。"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 6698,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/CloudNAS/115open",
+      "ctx": "vdir 为本地挂载路径（/vol1/1000/CloudNAS/115open/...）。"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 7805,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/vol1/1000",
+      "ctx": "#   · mdc_ng.db 只读走 /dockroot 挂载（media-hub 已挂 /vol1/1000/docker）。"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 7815,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/CloudNAS/115open",
+      "ctx": "MDC_SRC_ROOT = '/CloudNAS/115open/Adult-待整理/日韩'"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 7816,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/CloudNAS/115open",
+      "ctx": "MDC_TARGET_ROOT = '/CloudNAS/115open/KFC2/Adult/已刮削/日本'"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 8025,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/vol1/1000",
+      "ctx": "/CloudNAS/...     → 原样（面板同挂）；/vol1/... → 剥 /vol1/1000。"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 8034,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/vol1/1000",
+      "ctx": "if p.startswith('/vol1/1000/CloudNAS/'):"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 8035,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/vol1/1000",
+      "ctx": "return '/CloudNAS/' + p[len('/vol1/1000/CloudNAS/'):]"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 8172,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/CloudNAS/115open",
+      "ctx": "p = (path or '/CloudNAS/115open').strip()"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 11792,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/vol1/1000",
+      "ctx": "#   Web 容器读 /dockroot/kfcgame/keepalive/state.json（挂载 /vol1/1000/docker:/dockroot）"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 12368,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/vol1/1000",
+      "ctx": "#   · media-hub 已挂载 /vol1/1000/docker 为 /dockroot，可直接读写"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 16175,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/vol1/1000",
+      "ctx": "# playback_reporting.db 容器内路径（media-hub 已挂载 /vol1/1000/docker => /dockroot）"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 17515,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/vol1/1000",
+      "ctx": "#   写进 /vol1/1000/docker/media-hub/nas_metrics.json —— 而该目录正是容器里"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 18515,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/vol1/1000",
+      "ctx": "\"🧾 路径｜/vol1/1000/docker/kfcgame/backups/\" % (day, os.path.basename(tgz) if size else \"失败\", mb, detail))"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 21592,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/CloudNAS/115open",
+      "ctx": "CD2_ROOT = '/CloudNAS/115open'"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 21810,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/CloudNAS/115open",
+      "ctx": "#   每N 秒扫描 /CloudNAS/115open/待整理/PT → 找出「没有任何启用中方案覆盖」的"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 21817,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/CloudNAS/115open",
+      "ctx": "AUTO_DIR = os.path.join(CD2_ROOT, VROOT, 'PT')     # /CloudNAS/115open/待整理/PT"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 22803,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/vol1/1000",
+      "ctx": "#   /vol1/1000/docker/clouddrive2/config/systemsettings.json"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 23113,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/CloudNAS/115open",
+      "ctx": "\"\"\"宿主机挂载路径 → CD2 API 视角路径：/CloudNAS/115open/待整理/PT → /115open/待整理/PT\"\"\""
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 23581,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/vol1/1000",
+      "ctx": "#   ⑤ 存储目录 /dockroot/media-hub/bgimg（= 宿主机 /vol1/1000/docker/media-hub/bgimg），"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 26833,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/CloudNAS/115open",
+      "ctx": "也绝不弹任何人工交互。路径同时容忍 /主号/、/115open/、/CloudNAS/115open/ 三种写法"
+    },
+    {
+      "file": ".\\app\\app.py",
+      "line": 26842,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/CloudNAS/115open",
+      "ctx": "#   /CloudNAS/115open/未识别 —— 若容器 CWD 下带同名目录，就会「误告成功」，结果是掉进"
+    },
+    {
+      "file": ".\\app\\index.html",
+      "line": 16859,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/vol1/1000",
+      "ctx": "+'<input id=\"RN_DIR\" placeholder=\"目录：/主号/待整理/... 或本地 /vol1/1000/...\" style=\"flex:1;min-width:280px\" '"
+    },
+    {
+      "file": ".\\app\\index.html",
+      "line": 25025,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/CloudNAS/115open",
+      "ctx": "+'<div class=\"mc-sub\">clouddrive2 · /CloudNAS/115open</div></div>'"
+    },
+    {
+      "file": ".\\app\\index.html",
+      "line": 36506,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/vol1/1000",
+      "ctx": "html+='<div class=\"hint\" style=\"margin-top:8px;color:var(--warn)\">🔧 修复建议：编辑 <code>/vol1/1000/docker/kfcgame/config.json</code> 的 <code>emby.lines</code>，'"
+    },
+    {
+      "file": ".\\app\\index.html",
+      "line": 38154,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/vol1/1000",
+      "ctx": "+'</tbody></table></div><div class=\"hint\">目录：/vol1/1000/docker/kfcgame/backups/（NAS 侧可直接下载）</div>';"
+    },
+    {
+      "file": ".\\app\\index.html",
+      "line": 49542,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/CloudNAS/115open",
+      "ctx": "nw:{tree:{path:'/CloudNAS/115open',items:[],parent:''},picks:[],tgt:'',"
+    },
+    {
+      "file": ".\\app\\index.html",
+      "line": 49832,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/CloudNAS/115open",
+      "ctx": "if(!W.tree.items.length&&!W.tree.err&&!W._treeLoading){kgTreeGo(W.tree.path||'/CloudNAS/115open');}"
+    },
+    {
+      "file": ".\\app\\index.html",
+      "line": 49840,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/CloudNAS/115open",
+      "ctx": "+'<div class=\"row\" style=\"margin-top:8px\"><button class=\"btn sm\" onclick=\"kgTreeGo(\\'/CloudNAS/115open\\')\">☁️ 115根</button>'"
+    },
+    {
+      "file": ".\\app\\index.html",
+      "line": 49842,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/CloudNAS/115open",
+      "ctx": "+'<button class=\"btn sm\" onclick=\"kgTreeGo(\\'/CloudNAS/115open/Adult-待整理/日韩\\')\">🈳 日韩待整理</button>'"
+    },
+    {
+      "file": ".\\app\\index.html",
+      "line": 49844,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/CloudNAS/115open",
+      "ctx": "+'<button class=\"btn sm\" onclick=\"kgTreeGo(\\'/CloudNAS/115open/KFC2/Adult/已刮削/日本\\')\">🎯 目标库</button>'"
+    },
+    {
+      "file": ".\\app\\index.html",
+      "line": 49862,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/CloudNAS/115open",
+      "ctx": "+'<label class=\"fld\">目标目录<input id=\"kgn_tgt\" value=\"'+esc(W.tgt||'/CloudNAS/115open/KFC2/Adult/已刮削/日本')+'\" onchange=\"KG.nw.tgt=this.value\" placeholder=\"/CloudNA"
+    },
+    {
+      "file": ".\\bots\\kfcgame\\docker-compose.yml",
+      "line": 3,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/vol1/1000",
+      "ctx": "#  目录：/vol1/1000/docker/kfcgame"
+    },
+    {
+      "file": ".\\bots\\pt2cloud\\app\\config.py",
+      "line": 35,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/vol1/1000",
+      "ctx": "# 容器内只读挂载：/vol1/1000/docker/mediatidy/strm:/strm:ro"
+    },
+    {
+      "file": ".\\bots\\pt2cloud\\app\\config.py",
+      "line": 48,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/CloudNAS/115open",
+      "ctx": "CLOUD_ROOT = os.getenv(\"CLOUD_ROOT\", \"/CloudNAS/115open\")"
+    },
+    {
+      "file": ".\\bots\\pt2cloud\\app\\uploader.py",
+      "line": 49,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/CloudNAS/115open",
+      "ctx": "\"\"\"计算云端落点：/CloudNAS/115open/待整理/PT/{来源}/{站点}/{分类}/{种子名}"
+    },
+    {
+      "file": ".\\deploy\\docker-compose.yml",
+      "line": 100,
+      "rule": "PRIV-IP2",
+      "sev": "MED",
+      "desc": "常见局域网网段 10.x/172.16-31",
+      "match": "172.16.0.0",
+      "ctx": "#     - subnet: 172.16.0.0/16"
+    },
+    {
+      "file": ".\\docs\\v3-implementation-report.md",
+      "line": 10,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/vol1/1000",
+      "ctx": "| `/vol1/1000/docker/media-hub/index.html`（线上） | **修改**（+约 26KB，备份 `index.html.bak.<ts>_v31pre`） | 全站 UI 实际集成：V3 视觉增强层 CSS + 8 组 IA + V3 驾驶舱 JS |"
+    },
+    {
+      "file": ".\\docs\\v3-implementation-report.md",
+      "line": 70,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/vol1/1000",
+      "ctx": "- ✅ **已部署**：线上 `/vol1/1000/docker/media-hub/index.html`（保 inode 回传 + docker restart + HTTP 200）。"
+    },
+    {
+      "file": ".\\docs\\v3-migration-report.md",
+      "line": 4,
+      "rule": "PRIV-IP",
+      "sev": "HIGH",
+      "desc": "内网 IP 192.168.x.x",
+      "match": "192.168.10.110",
+      "ctx": "> **生产部署状态：已部署到线上环境**（NAS `192.168.10.110` media-hub 容器，真机截图与断言均来自该运行版）。"
+    },
+    {
+      "file": ".\\docs\\v3-migration-report.md",
+      "line": 4,
+      "rule": "PRIV-HASH",
+      "sev": "CRIT",
+      "desc": "命中个人秘密哈希清单",
+      "match": "<hashed-secret>",
+      "ctx": "> **生产部署状态：已部署到线上环境**（NAS `192.168.10.110` media-hub 容器，真机截图与断言均来自该运行版）。"
+    },
+    {
+      "file": ".\\docs\\v3-migration-report.md",
+      "line": 32,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/vol1/1000",
+      "ctx": "| `/vol1/1000/docker/media-hub/index.html` | +注册表联动 + 统一网盘中心 + 修 `d is not defined` 回退 | `index.html.bak.<ts>_v3stage1` |"
+    },
+    {
+      "file": ".\\docs\\v3-migration-report.md",
+      "line": 33,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/vol1/1000",
+      "ctx": "| `/vol1/1000/docker/media-hub/app.py` | **本轮未改** | `app.py.bak.<ts>_v3stage1` |"
+    },
+    {
+      "file": ".\\docs\\v3-migration-report.md",
+      "line": 83,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/vol1/1000",
+      "ctx": "sudo cp /vol1/1000/docker/media-hub/index.html.bak.<ts>_v3stage1 /vol1/1000/docker/media-hub/index.html"
+    },
+    {
+      "file": ".\\docs\\v3-migration-report.md",
+      "line": 83,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/vol1/1000",
+      "ctx": "sudo cp /vol1/1000/docker/media-hub/index.html.bak.<ts>_v3stage1 /vol1/1000/docker/media-hub/index.html"
+    },
+    {
+      "file": ".\\docs\\v3-migration-report.md",
+      "line": 85,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/vol1/1000",
+      "ctx": "sudo cp /vol1/1000/docker/media-hub/v3/hub_v3.db.bak.<ts>_v3stage1 /vol1/1000/docker/media-hub/v3/hub_v3.db"
+    },
+    {
+      "file": ".\\docs\\v3-migration-report.md",
+      "line": 85,
+      "rule": "PRIV-STRM",
+      "sev": "MED",
+      "desc": "本机 strm/挂载绝对路径",
+      "match": "/vol1/1000",
+      "ctx": "sudo cp /vol1/1000/docker/media-hub/v3/hub_v3.db.bak.<ts>_v3stage1 /vol1/1000/docker/media-hub/v3/hub_v3.db"
+    }
+  ]
+}
