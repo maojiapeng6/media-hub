@@ -22502,7 +22502,18 @@ async function ovSessions(){
 
   if(!ss.length){RTX.patchDiff('ov_sessions','<div class="empty" style="padding:12px">👤 当前无人观看</div>');return;}
 
-  RTX.patchDiff('ov_sessions', ss.map((x,xi)=>{
+  // ★★ 双实例来源筛选条（KFC / KFC2 隔离验证）：点按切换 window.__ovSrvFlt 并整体重渲染
+  const _cur=window.__ovSrvFlt||'all';
+  const _has2=ss.some(s=>(s.server_key||'emby')==='emby_adult');
+  const _opts=[['all','全部']];
+  if(ss.some(s=>(s.server_key||'emby')!=='emby_adult'))_opts.push(['emby','KFC']);
+  if(_has2)_opts.push(['emby_adult','KFC2']);
+  const _btn=(k,label)=>{const on=(k===_cur);return '<button class="ov-srv-btn" data-k="'+k+'" style="cursor:pointer;font-size:11px;font-weight:700;padding:3px 12px;border-radius:99px;border:1px solid '+(on?'var(--acc)':'rgba(255,255,255,.16)')+';background:'+(on?'var(--acc)':'rgba(255,255,255,.05)')+';color:'+(on?'#fff':'var(--sub)')+'">'+label+'</button>';};
+  const _bar='<div class="row" style="gap:6px;flex-wrap:wrap;margin:2px 0 8px">'+_opts.map(o=>_btn(o[0],o[1])).join('')+'</div>';
+  const _ss=(_cur==='all')?ss:ss.filter(s=>(s.server_key||'emby')===_cur);
+  if(!_ss.length){RTX.patchDiff('ov_sessions', _bar+'<div class="empty" style="padding:12px">📭 该实例当前无人观看</div>');return;}
+
+  RTX.patchDiff('ov_sessions', _bar + _ss.map((x,xi)=>{
 
     const pct=Math.max(0,Math.min(100,x.pct||0));
 
@@ -22639,7 +22650,7 @@ async function ovSessions(){
 
     const _ord=(x.first_ts||0);
 
-    const card='<div class="card ovss-rich" style="margin:7px 0;padding:12px;background:rgba(14,165,233,.06);'
+    const card='<div class="card ovss-rich" data-srv="'+esc(x.server_key||'emby')+'" style="margin:7px 0;padding:12px;background:rgba(14,165,233,.06);'
 
       +'display:flex;gap:14px;align-items:stretch;position:relative">'
 
@@ -22650,6 +22661,7 @@ async function ovSessions(){
       +'<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">'
 
       +'<span style="font-size:14.5px;font-weight:600;color:var(--txt)">🎬 '+esc(x.item_name)+'</span>'
+      +(x.server?'<span class="rnk-src" style="'+(x.server_key==='emby_adult'?'color:#fbbf24;background:rgba(251,191,36,.16);border-color:rgba(251,191,36,.45)':'')+'">'+esc(x.server)+'</span>':'')
       +(dr?'<span style="display:inline-block;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:99px;color:#f0e2ff;white-space:nowrap;vertical-align:middle;background:linear-gradient(100deg,rgba(168,85,247,.30),rgba(56,189,248,.20));border:1px solid rgba(168,85,247,.5)" title="动态范围">'+esc(dr)+'</span>':'')
 
       +(x.ep?'<span class="tag acc" style="font-size:10.5px">'+esc(x.ep)+'</span>':'')
@@ -22693,6 +22705,8 @@ async function ovSessions(){
     return card;
 
   }).join(''));
+
+  el.querySelectorAll('.ov-srv-btn').forEach(b=>{ b.onclick=()=>{ try{ window.__ovSrvFlt=b.dataset.k; ovSessions(); }catch(e){} }; });
 
 }
 

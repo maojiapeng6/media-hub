@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.0.5] - 2026-11-13 · 实时观看多实例隔离修复（KFC/KFC2 不串台）
+
+### Fixed（P0 紧急）
+- **实时观看多实例隔离（KFC / KFC2 不串台）**：`emby_sessions()` 由单实例改为并发拉取 `emby`(KFC,8096) 与 `emby_adult`(KFC2,8896)，每个会话按来源实例打 `server`（Emby 真名）与 `server_key`；图片代理段随实例隔离（`/embyimg/emby/...` vs `/embyimg/emby_adult/...`），绝不跨库串台。
+- **来源服务器徽标 + 筛选条**：实时观看卡片加 `data-srv` 与 KFC/KFC2 来源徽标；顶部加「全部 / KFC / KFC2」筛选条（点按整体重渲染），可直接验证双实例隔离。
+- 画质/媒体信息全部保留：海报+候选图回退、分辨率(8K/4K/1080P)、HDR/DV/SDR、编码、位深、帧率、码率、音频、字幕、DirectPlay/Transcode、进度条、播放状态、用户/TG、设备/客户端/版本/IP。
+
+### 实测
+- 单元化验证（mock KFC+KFC2 双会话）：`server`/`server_key` 正确、`img` 段随实例隔离、quality 解析双实例、transcode/paused/playing 正确、跨实例零串台断言 PASS。
+- 线上 API `/api/emby/sessions`：`ok=True`、字段含 server/server_key、quality 串完整、`/embyimg/` 代理返回真实 JPEG（200, image/jpeg）。
+- `py_compile` + `node --check` 通过；`privacy_scan` blocking=0。
+
 ## [2.0.4] - 2026-11-12 · 网盘中心独立一级 + CD2/OpenList 下拉 + 旧页面刷新提示
 
 ### Fixed（用户截图反馈）

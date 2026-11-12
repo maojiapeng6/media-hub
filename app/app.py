@@ -15915,14 +15915,41 @@ def emby_sessions():
     谁在看/看什么/进度/画质/设备，全部详细展示。"""
     out = {"ok": False, "sessions": [], "err": ""}
     try:
-        j = _emby_http("/emby/Sessions", t=12)
-        if j is None:
-            out["err"] = "Emby 不可达"
+        from concurrent.futures import ThreadPoolExecutor as _TPE
+
+        def _fetch_inst(_which, _fb):
+            # 名字只认 Emby 自己 /emby/System/Info 的 ServerName（用户明确要求不写死）
+            _si = _emby_inst_http(_which, "/emby/System/Info", t=6) or {}
+            _sname = str(_si.get("ServerName") or _fb)
+            _jj = _emby_inst_http(_which, "/emby/Sessions", t=12)
+            return _which, _sname, _jj
+
+        j = []
+        _dead = []
+        _insts = [('emby', 'KFC'), ('emby_adult', 'KFC2')]
+        try:
+            with _TPE(max_workers=2) as _ex:
+                _res = list(_ex.map(lambda a: _fetch_inst(*a), _insts))
+        except Exception:
+            _res = [_fetch_inst(w, f) for w, f in _insts]
+        for _which, _sname, _jj in _res:
+            if _jj is None:
+                _dead.append(_sname)
+                continue
+            for _x in (_jj if isinstance(_jj, list) else []):
+                if isinstance(_x, dict):
+                    _x["_which"] = _which
+                    _x["_sname"] = _sname
+                    j.append(_x)
+        if not j and _dead:
+            out["err"] = "Emby 不可达：" + "、".join(_dead)
             return out
         rows = []
         for x in (j if isinstance(j, list) else []):
             if not isinstance(x, dict):
                 continue
+            _seg = x.get("_which") or "emby"
+            _sname = x.get("_sname") or ("KFC2" if _seg == "emby_adult" else "KFC")
             now = x.get("NowPlayingItem") or {}
             if not now:
                 continue                      # 没有播放项的会话跳过
@@ -16039,11 +16066,6 @@ def emby_sessions():
             dur = float(now.get("RunTimeTicks") or 0)
             pct = round(pos / dur * 100, 1) if dur > 0 else 0
             # 图片：剧照优先，退回海报
-            ek = cfg().get('emby_key') or EMBY_KEY_FB
-            # ★ 必须是完整 URL（浏览器直连 Emby 8096），不能给相对路径——
-            #   media-hub 自己没有 /emby/ 反代，相对路径会 404。
-            ebase = "http://%s:%s" % (containers()['emby']['addr'],
-                                      containers()['emby']['port'])
             img = ""
             iid = str(now.get("Id") or "")
             sid = str(now.get("SeriesId") or now.get("ParentBackdropItemId") or "")
@@ -16065,15 +16087,15 @@ def emby_sessions():
             #   并把候选顺序改成「条目 Primary → 剧集 Primary → Backdrop → Thumb」：
             #   strm 库里 Backdrop 经常没有，先试 Primary 命中率最高。
             if _pt and iid:
-                img_list.append("/embyimg/emby/%s/Primary?w=300" % iid)
+                img_list.append("/embyimg/%s/%s/Primary?w=300" % (_seg, iid))
             if sid and sid != iid:
-                img_list.append("/embyimg/emby/%s/Primary?w=300" % sid)
+                img_list.append("/embyimg/%s/%s/Primary?w=300" % (_seg, sid))
             if _bt and iid:
-                img_list.append("/embyimg/emby/%s/Backdrop?w=300" % iid)
+                img_list.append("/embyimg/%s/%s/Backdrop?w=300" % (_seg, iid))
             if _bt and sid and sid != iid:
-                img_list.append("/embyimg/emby/%s/Backdrop?w=300" % sid)
+                img_list.append("/embyimg/%s/%s/Backdrop?w=300" % (_seg, sid))
             if _tt and iid:
-                img_list.append("/embyimg/emby/%s/Thumb?w=300" % iid)
+                img_list.append("/embyimg/%s/%s/Thumb?w=300" % (_seg, iid))
             _seen_i = set()
             img_list = [u for u in img_list if not (u in _seen_i or _seen_i.add(u))]
             img = img_list[0] if img_list else ""
@@ -16100,10 +16122,13 @@ def emby_sessions():
                 first_ts = _rec['first']
             _tgm = tg_name_map().get(str(x.get("UserName") or "")) or {}
             _uid = str(x.get("UserId") or "")
-            _uava = ("/embyimg/emby/users/%s/Primary?w=96" % _uid) if _uid else ""
+            _uava = ("/embyimg/%s/users/%s/Primary?w=96" % (_seg, _uid)) if _uid else ""
             rows.append({
                 # ★ v1.18：会话唯一键（前端 DOM id / 排序锚点都靠它）
                 "session_id": _sid,
+                # ★★ 双实例：来源服务器展示 + 前端筛选/隔离依赖
+                "server": _sname,
+                "server_key": _seg,
                 "user_id": _uid,
                 "user_avatar": _uava,
                 "dr": _rng,
