@@ -86,3 +86,19 @@ sudo cp <MEDIAHUB_DIR>/<V3_DIR>/hub_v3.db.bak.<ts>_v3stage1 <MEDIAHUB_DIR>/<V3_D
 sudo docker restart media-hub
 ```
 原 13 个服务配置来自 webcfg（未改动），即使回滚 DB 也能从配置重建。
+
+## 8. 追加交付（同日晚间 · 统计模块联动 + 手机修复）
+
+### 8.1 统一数据中心（注册表驱动，用户点名要求）
+- **实测**：新增测试媒体实例 `测试媒体服务器03` → 数据中心实例筛选器**自动出现该实例**（无需改任何代码）；删除后恢复 13 个真实实例
+- **数据**：真实 API `/api/emby/plays`（1260 条）/ `/api/emby/rank`（60 用户）/ `/api/notify` / `/api/jobs`
+- **能力**：全部实例聚合 / 单实例筛选（KFC / KFC2 / EmbyBoss）/ 时间范围（1/7/30 天）
+- **旧功能保留**：`db`/`plays` 原页面完整保留，新数据中心挂在 `db` 入口
+
+### 8.2 手机端横向溢出修复
+- **根因**：旧极光装饰层（`.au-ring` 宽 1309px / `.au-bgx` / `.au-orb`）在手机端撑宽页面（scrollWidth 436 > 390）
+- **修复**：手机端隐藏装饰层 + `html,body{overflow-x:hidden;max-width:100vw}`
+- **实测**：手机 390px `scrollWidth=clientWidth=390` ✅
+
+### 8.3 全量回归
+44/44 菜单真实点击 0 失败 · 5 主题切换 OK · 手机零溢出 · 零 JS 错误 · 旧圆环 oldRing=0
