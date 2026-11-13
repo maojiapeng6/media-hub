@@ -1,5 +1,26 @@
 # Changelog
 
+## [2.1.0] - 2026-11-13 · 实时观看会话卡升级 3×3 九宫格 + 实例摘要 + 详细参数
+
+### Added（实时观看面板 v3）
+- **3×3 九宫格画质卡**：分辨率(含像素) / 片源 / 动态范围 · 视频编码(含封装) / 码率(含帧率) / 音频 · 色深 / 文件大小 / 来源IP(含设备)，优先级按用户要求排列。
+- **双实例摘要卡**：顶部常显 KFC / KFC2 在线状态与当前会话数（绿=KFC、黄=KFC2）。
+- **详细参数展开**：每张卡可展开播放器版本、Emby 实例、帧率、封装、片源、TMDB、文件路径。
+- **后端字段增补**：`emby_sessions()` 返回 `res_px`(像素分辨率) / `fps` / `container`(封装) / `source`(片源，由路径解析) / `path`，供九宫格使用。
+- 进度 / 状态 / 剩余时间沿用每秒刷新（`rtxSessions`），动态节点不重建、海报不重载。
+
+### 实测
+- Node 单元渲染 mock 会话：9 格标签全中，IP / 像素分辨率 / 帧率 / 片源 / 详情按钮均正确生成。
+- `py_compile` + `node --check` 通过；`privacy_scan` blocking=0。
+
+### Security（凭据环境变量化）
+- 原硬编码的 DB root 密码、RT 后台账号、群主 TG-ID 及各 NAS 内网 IP 全部改为读环境变量
+  （`MH_DB_PASSWORD` / `MH_RT_USER` / `MH_RT_PASS` / `MH_OWNER_TG` / `MH_NAS_IP` / `MH_PROXY_IP`），
+  公开仓库 `privacy_scan` 守门由 blocking=34 降至 **0**。
+- `index.html` 中的 `{{MH_NAS_IP}}` / `{{MH_OWNER_TG}}` 占位由后端 serve 时按环境变量注入，
+  仓库静态文件不含任何真实凭据/内网地址。
+- 密码值不变（仅从代码迁移到 compose env），符合「凭据零变更」。
+
 ## [2.0.5] - 2026-11-13 · 实时观看多实例隔离修复（KFC/KFC2 不串台）
 
 ### Fixed（P0 紧急）

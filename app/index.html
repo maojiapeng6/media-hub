@@ -1554,6 +1554,20 @@ body #view.ovm-grid .ovm[data-scroll="1"]>.card>.ovm-scroll.tall{overflow:visibl
 
 }
 
+/* ★★ 2026-11-06：实时观看用户头像（圆形，可点跳 TG 主页）+ TG 信息 */
+#ov_sessions .ovss-ava{
+  width:34px;height:34px;border-radius:50%;object-fit:cover;flex:0 0 auto;
+  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);
+  display:inline-block;vertical-align:middle;cursor:pointer;transition:transform .15s ease}
+#ov_sessions .ovss-ava:hover{transform:scale(1.08);border-color:var(--acc)}
+#ov_sessions .ovss-ava-empty{
+  display:inline-flex;align-items:center;justify-content:center;
+  font-size:15px;font-weight:700;color:var(--sub);cursor:default}
+#ov_sessions .ovss-tgu{color:var(--acc);font-size:11.5px;font-weight:600;white-space:nowrap}
+#ov_sessions .ovss-tgid{color:var(--sub);font-size:11px;white-space:nowrap}
+#ov_sessions .ovss-userrow{align-items:center}
+#ov_sessions .ovss-tgu a{color:var(--acc)}
+
 #ov_sessions .ovss-uid{flex:0 0 auto;color:var(--sub);font-size:11px;white-space:nowrap}
 
 #ov_sessions .ovss-meta .tag{flex:0 0 auto;font-size:10px;white-space:nowrap}
@@ -3455,8 +3469,15 @@ body.light .em-menu .sep{background:rgba(15,23,42,.12)}
   .dsc-tor .tr .aa{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}
 
   /* ★ v1.14 BUG-116：PT 资源行封面（RSS description 里的豆瓣海报）*/
+  /* ★★ 2026-11-06 修「竖排文字」根因：老模板 4 列(24/46/1fr/auto) 但 DOM 只有
+     3 个直接子元素（海报 .tr-po 在内容 div 内部）→ 内容 div 被塞进 46px 窄列
+     → 标题/参数逐词换行成竖条。改为 3 列 + 内容 div 内部「海报左/文本右」横排，
+     并给 meta 保持横向流式（宽度够就一行，窄了自然折行但不再逐字竖排）。 */
+  .dsc-tor .tr{grid-template-columns:24px minmax(0,1fr) auto}
 
-  .dsc-tor .tr{grid-template-columns:24px 46px 1fr auto}
+  .dsc-tor .tr>div{display:flex;align-items:flex-start;gap:9px;min-width:0}
+
+  .dsc-tor .tr>div>:not(.tr-po){flex:1;min-width:0}
 
   .dsc-tor .tr .tr-po{width:46px;height:64px;border-radius:6px;overflow:hidden;
 
@@ -5504,9 +5525,16 @@ body.nav-top .nav .navdom-grp>.navsec.navdom{margin:0 4px 0 0}
 
    不要比控制展开收纳的那个模块大」。字重保留 700 靠色彩区分层级。 */
 
-.nav button.prim{font-weight:800;color:var(--txt);font-size:12.5px}
-
+/* ★ 2026-11-06 用户二次要求：prim 必须**完全等同** sub——同字重/同缩进/
+   同前置小圆点/不发光；只有当前打开（.on）才高亮发光辅助定位 */
+.nav button.prim{font-weight:500;color:var(--sub);font-size:12.5px;padding-left:30px}
+/* ★ 2026-11-06 prim 用真实 DOM 圆点（.navdot，buildNav 注入），比伪元素稳 */
+.nav button .navdot{position:absolute;left:20px;top:50%;width:4px;height:4px;border-radius:50%;
+  background:var(--muted);opacity:.8;transform:translateY(-50%);transition:background .16s,opacity .16s;flex:none}
+.nav button:hover .navdot{background:var(--acc);opacity:1}
+.nav button.on .navdot{background:#fff;opacity:1}
 .nav button.prim .ic{font-size:15px}
+.nav button.prim.on{font-weight:800;color:var(--txt)}
 
 .nav button.sub{padding-left:30px;font-size:12.5px;color:var(--sub)}
 
@@ -7638,13 +7666,18 @@ body.light .hbar-row .tr{background:rgba(20,30,60,.07)}
 
 .rnk-row{display:grid;grid-template-columns:28px 22px minmax(0,1.35fr) minmax(60px,1fr) auto auto;
 
-  gap:10px;align-items:center;padding:3px 10px;border-radius:12px;line-height:1.15;
+  gap:10px;align-items:center;padding:5px 11px;border-radius:12px;
 
   background:linear-gradient(100deg,rgba(255,255,255,.045),rgba(255,255,255,.015));
 
   border:1px solid rgba(255,255,255,.07);transition:border-color .18s,background .18s,transform .18s}
 
 .rnk-row:hover{border-color:rgba(244,114,182,.38);background:linear-gradient(100deg,rgba(244,114,182,.08),rgba(255,255,255,.02));transform:translateX(2px)}
+
+/* ★ 2026-11-06 用户行可点 → 跳个人播放记录 */
+.rnk-row.rnk-go{cursor:pointer}
+.rnk-row.rnk-go:hover{border-color:color-mix(in srgb,var(--hue-a) 55%,transparent)}
+.rnk-row.rnk-go:active{transform:translateX(2px) scale(.995)}
 
 .rnk-row .rk{font-size:15px;font-weight:800;text-align:center;line-height:1.2;
 
@@ -7726,7 +7759,7 @@ body.light .rnk-row.top .sec{color:#b45309}
 
    （同一个人每次刷新颜色一致，不会变脸），观感等同系统默认头像而不是缺图。 */
 
-.rnk-row .rnk-av{width:20px;height:20px;border-radius:50%;flex:0 0 auto;overflow:hidden;
+.rnk-row .rnk-av{width:21px;height:21px;border-radius:50%;flex:0 0 auto;overflow:hidden;
 
   display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;
 
@@ -7780,6 +7813,10 @@ body.light .rnk-row .rnk-av{color:#fff;box-shadow:0 2px 6px -3px rgba(20,30,60,.
 
   border:1px solid color-mix(in srgb,var(--t-info,#38bdf8) 26%,transparent)}
 
+/* ★ 2026-11-05 观看列表来源徽标：KFC=天蓝 / KFC2=品红（与实时条卡片配色一致） */
+.rnk-src.src-kfc{color:#7dd3fc;background:rgba(56,189,248,.14);border-color:rgba(56,189,248,.34)}
+.rnk-src.src-kfc2{color:#f9a8d4;background:rgba(236,72,153,.16);border-color:rgba(236,72,153,.38)}
+
 .rnk-tm{display:inline-flex;align-items:center;gap:2px;font-size:9.5px;font-weight:800;
 
   padding:1px 5px;border-radius:5px;text-decoration:none;letter-spacing:.2px;
@@ -7794,9 +7831,13 @@ body.light .rnk-row .rnk-av{color:#fff;box-shadow:0 2px 6px -3px rgba(20,30,60,.
 
 .rnk-row .nm .rnk-nm-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
-.rnk-meta{display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:1px}
+.rnk-meta{display:flex;align-items:center;gap:5px;flex-wrap:nowrap;margin-top:1px;
 
-.rnk-meta .rnk-mq{font-size:9.5px;color:var(--muted);max-width:230px;
+  overflow:hidden;white-space:nowrap}/* ★ 2026-11-06 用户嫌行太高：meta 一行不再折行，超出省略 */
+
+.rnk-meta>*{flex:0 0 auto}
+
+.rnk-meta .rnk-mq{font-size:9.5px;color:var(--muted);max-width:160px;
 
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
@@ -12778,11 +12819,17 @@ const TABS = [
 
   {id:'priority', ic:'⚡', name:'整理优先级'},
 
+  {id:'mtdiag', ic:'🩺', name:'错误诊断'},
+
+  {id:'subsync', ic:'🔤', name:'字幕同步'},
+
   {id:'keepalive', ic:'🛰️', name:'PT 保号（群主）'},
 
   {id:'db', ic:'🗄️', name:'数据库'},
 
   {id:'botsync', ic:'🤖', name:'机器人联动'},
+
+  {id:'sync', ic:'🔄', name:'同步中心'},
 
   {id:'auto', ic:'🎯', name:'MT 自动建方案'},
 
@@ -12926,6 +12973,10 @@ const NAV_DOMAINS = [
 
      {id:'naming', note:'自动命名（命名整理 + 智能命名已合并）'},
 
+     {id:'mtdiag', note:'错误诊断与自动修复'},
+
+     {id:'subsync', note:'字幕扫描并下载到本地'},
+
    ]},
 
   {label:'🎬 下载链路', desc:'MoviePilot 订阅求片 + qBittorrent 下载器（合并原 MP 域）',
@@ -12973,6 +13024,8 @@ const NAV_DOMAINS = [
      {id:'db', note:'数据库管理'},
 
      {id:'botsync', note:'机器人联动'},
+
+     {id:'sync', note:'商业化绑定：各容器数据同步到本机画像'},
 
      {id:'notify', note:'播报流水'},
 
@@ -13086,23 +13139,7 @@ async function apiGet(p,ttl=15000){
 
 function bust(p){delete _GC[p];}
 
-// ★ 开源商业化修复：apiPost 原来是无超时的裸 fetch——后端挂起/慢时，
-//   runCore 按钮会永远停在「⏳ 执行中…」转圈，页面卡死。
-//   现统一加 AbortController 超时（默认 60s，可传第 3 参覆盖），失败/超时
-//   不抛异常而是返回 {ok:false,msg,...}，与 apiGet 行为对齐；
-//   runCore 在 finally 必然恢复按钮。所有 92 处直接调用自动受益。
-async function apiPost(p,b,timeoutMs){
-  const ctl=new AbortController();
-  const to=setTimeout(()=>ctl.abort(),timeoutMs||60000);
-  try{
-    const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{}),signal:ctl.signal});
-    try{ return await r.json(); }
-    catch(_){ return {ok:false,msg:'接口返回非 JSON（HTTP '+r.status+'）'}; }
-  }catch(e){
-    const ab=(e&&e.name==='AbortError');
-    return {ok:false,msg:ab?('请求超时（'+((timeoutMs||60000)/1000)+'s）：'+p.replace(/^\/api\//,'')):('请求失败：'+e)};
-  }finally{clearTimeout(to);}
-}
+async function apiPost(p,b){const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});return r.json();}
 
 function toast(msg,type='info',ms){
 
@@ -13334,7 +13371,7 @@ async function runCore(path,body,btn,opts){
 
   }catch(e){toast('请求失败：'+e,'err');return {ok:false,msg:e+''};}
 
-  finally{if(btn){btn.disabled=false;try{btn.textContent=old;}catch(_){}}}
+  finally{if(btn){btn.disabled=false;btn.textContent=old;}}
 
 }
 
@@ -13542,7 +13579,15 @@ function buildNav(){
 
     const pt=TAB_BY_ID[d.primary];
 
-    if(pt){const b=mk(pt);b.classList.add('prim');grp.appendChild(b);}
+    if(pt){const b=mk(pt);b.classList.add('prim');
+
+      // ★ 2026-11-06 用户要求 prim 与 sub 完全统一：真实 DOM 圆点（伪元素在部分
+
+      //   移动端渲染被吃掉），选中态由 .on .navdot 变白
+
+      const _dot=document.createElement('span');_dot.className='navdot';b.appendChild(_dot);
+
+      grp.appendChild(b);}
 
     // 子项（缩进 + hover 显示短注）
 
@@ -14456,13 +14501,13 @@ function renderCurrent(){
 
   const map={overview:renderOverview,submgmt:renderSubMgmt,keepalive:renderKeepalive,pt:renderPT,containers:renderContainers,workflow:renderWorkflow,
 
-    diagnose:renderDiagnose,mp:renderMP,qb:renderQB,emby:renderEmby,logs:renderLog,settings:renderSettings,
+    diagnose:renderDiagnose,mtdiag:renderMTDiag,subsync:renderSubSync,mp:renderMP,qb:renderQB,emby:renderEmby,logs:renderLog,settings:renderSettings,
 
     library:renderLibrary,auto:renderAuto,ptc:renderPTC,mt:renderMTtab,notify:renderNotify,
 
     changelog:renderAnnounce,priority:renderPriority,plays:renderPlays,
 
-    mtctl:renderMTCtl,rename:renderRename,mtbox:renderMtbox,naming:renderNaming,cloudcookie:renderCloudCookie,db:renderDB,botsync:renderBotSync,kg_mdc:renderKgMdc,kg_avdb:renderKgAvdb};
+    mtctl:renderMTCtl,rename:renderRename,mtbox:renderMtbox,naming:renderNaming,cloudcookie:renderCloudCookie,db:renderDB,botsync:renderBotSync,kg_mdc:renderKgMdc,kg_avdb:renderKgAvdb,sync:renderSync};
 
   (map[CUR]||renderOverview)();
 
@@ -18934,6 +18979,8 @@ let MTCTL={tasks:[]}, SUBPLAN=null, PREPLAN=null;
 
 async function renderMTCtl(){
 
+  setTimeout(mtCleanupInit,600);
+
   const v=document.getElementById('view');
 
   v.innerHTML='<div class="empty"><span class="spin"></span> 读取任务…</div>';
@@ -18944,15 +18991,47 @@ async function renderMTCtl(){
 
   const s=(d&&d.summary)||{};
 
-  let h='<div class="grid g4">'
+  let h='<div style="border-radius:18px;padding:24px 26px;background:linear-gradient(135deg,rgba(168,85,247,.22),rgba(236,72,153,.15),rgba(59,130,246,.18));border:1px solid rgba(168,85,247,.32)">'
 
-    +astat('▶️',s.running||0,'运行中')+astat('✅',s.done||0,'已完成')
+    +'<div style="font-size:20px;font-weight:800;letter-spacing:.5px">🎛️ 任务控制中心</div>'
 
-    +astat('⛔',s.cancelled||0,'已取消')+astat('⚠️',s.interrupted||0,'被中断')+'</div>';
+    +'<div class="hint" style="margin-top:5px">⛔ 热取消不停 MT、不影响其他任务（STRM 等照跑）· ⚡ 指定方案立即运行 · 每 5 秒自动刷新</div>'
+
+    +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-top:18px">'
+
+    +mtStatCard('▶️','#818cf8',s.running||0,'运行中')+mtStatCard('⏳','#fb923c',(MTCTL.tasks||[]).filter(t=>t.status==='pending').length,'排队中')
+
+    +mtStatCard('✅','#34d399',s.done||0,'今日完成')+mtStatCard('⛔','#f472b6',s.cancelled||0,'已取消')+'</div></div>';
+
+  h+='<div class="card" style="margin-top:14px;background:linear-gradient(135deg,rgba(99,102,241,.14),rgba(236,72,153,.08));border:1px solid rgba(99,102,241,.25)">'
+
+    +'<h3>🎯 运行中任务 <span class="tag">每 5 秒自动刷新</span></h3>'
+
+    +'<div id="mtRunBox"><div class="empty"><span class="spin"></span> 加载中…</div></div></div>';
+
+  h+='<div class="card" style="margin-top:16px"><h3>⚡ 优先运行 <span class="tag">立即执行，不等轮询</span></h3>'
+
+    +'<div class="hint">快捷键直接跑，或从完整列表选择任意方案。</div>'
+
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">'
+
+    +mtQuickChip('organize:903','🎬 MT转存','acc')+mtQuickChip('organize:904','📁 MT离线','acc')
+
+    +mtQuickChip('organize:1214','📥 RT转存','')+mtQuickChip('organize:1025','📡 PT订阅','')
+
+    +mtQuickChip('organize:356','📺 RT离线','')+'</div>'
+
+    +'<div class="row" style="margin-top:14px;flex-wrap:wrap;align-items:center">'
+
+    +'<select id="MT_PROF_SEL" style="min-width:340px;max-width:520px"><option value="">加载方案中…</option></select>'
+
+    +'<button class="btn acc" onclick="mtRunProfile()">▶ 立即运行选中方案</button>'
+
+    +'<button class="btn" onclick="mtStartScan()">🚀 全量扫描</button></div></div>';
 
 
 
-  h+='<div class="card" style="margin-top:14px"><h3>📋 任务列表 <span class="tag">最近 60 条</span></h3>'
+  h+='<div class="card" style="margin-top:14px"><h3>📋 任务历史 <span class="tag">最近 60 条</span></h3>'
 
     +'<div class="hint">实测：MT 官方界面的「关闭/取消」都不可靠——toggle 被任务组互锁拒绝，'
 
@@ -18960,25 +19039,11 @@ async function renderMTCtl(){
 
     +'这里的「停止」走 <b>停MT→改库→启MT</b>（约5~8秒），是唯一真正生效的路径；勾选方案还能连方案一起强关，防止 60 秒后轮询把它自动重开。</div>'
 
-    +'<div class="acts" style="margin:8px 0"><button class="btn sm warn" onclick="mtStopAll()">🛑 停止全部运行中任务（并强关其方案）</button></div>'
+    +'<div class="acts" style="margin:8px 0"><button class="btn sm warn" onclick="mtStopAll()">🛑 停止全部运行中任务（并强关其方案）</button> <button class="btn sm bad" id="mtCleanupBtn" onclick="mtCleanupToggle()">🧹 停止所有清理（优先整理）</button> <span class="hint" id="mtCleanupHint"></span></div>'
 
     +'<div class="tblscroll"><table><thead><tr><th>ID</th><th>方案</th><th>状态</th><th>进度</th>'
 
     +'<th>耗时</th><th>源目录</th><th>操作</th></tr></thead><tbody id="mtctl_tb"></tbody></table></div></div>';
-
-
-
-  h+='<div class="card" style="margin-top:14px"><h3>🚀 启动整理</h3>'
-
-    +'<div class="hint">MT 没有「立即扫描」接口，这里通过重启 MT 触发它的 Poller 重新扫描全部 polling 方案。</div>'
-
-    +'<div class="row" style="margin-top:10px;flex-wrap:wrap">'
-
-    +'<button class="btn acc" onclick="mtStartScan()">🚀 触发全量扫描</button>'
-
-    +'<input id="MT_PROF" placeholder="方案 key，如 organize:356" style="width:220px">'
-
-    +'<button class="btn" onclick="mtStartProfile()">▶️ 启动指定方案</button></div></div>';
 
 
 
@@ -19026,6 +19091,78 @@ async function renderMTCtl(){
 
   renderMTTaskTable();
 
+  mtRenderRunning(); mtLoadProfiles();
+
+  if(MTCTL.timer)clearInterval(MTCTL.timer);
+
+  MTCTL.timer=setInterval(()=>{ if(!document.getElementById('mtRunBox')){clearInterval(MTCTL.timer);return;} mtRenderRunning(); },5000);
+
+}
+
+function mtStatCard(ic,color,n,label){
+  return '<div style="border-radius:14px;padding:14px 16px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);display:flex;align-items:center;gap:12px">'
+    +'<div style="width:38px;height:38px;border-radius:11px;background:'+color+'33;display:flex;align-items:center;justify-content:center;font-size:18px">'+ic+'</div>'
+    +'<div><div style="font-size:20px;font-weight:800;line-height:1">'+n+'</div><div class="hint" style="margin-top:3px">'+label+'</div></div></div>';
+}
+
+function mtQuickRun(key){
+  const nm={"organize:903":"MT转存","organize:904":"MT离线","organize:1214":"RT转存","organize:1025":"PT订阅","organize:356":"RT离线"}[key]||key;
+  apiPost('/api/mt/task/start',{profile:key}).then(r=>{
+    toast(r&&r.ok?('✅ 已优先运行：'+nm):('❌ '+((r&&r.msg)||'失败')),r&&r.ok?'ok':'err');
+    if(r&&r.ok) setTimeout(mtRenderRunning,4000);
+  });
+}
+
+function mtQuickChip(key,label,cls){
+  return '<button class="btn sm '+(cls||'')+'" onclick="mtQuickRun(\''+key+'\')" style="padding:8px 16px;border-radius:11px">'+label+'</button>';
+}
+
+async function mtRenderRunning(){
+
+  const box=document.getElementById('mtRunBox'); if(!box)return;
+
+  try{
+    const d=await apiGet('/api/mt/tasks?n=20');
+    const items=(d&&d.items)||[];
+    const run=items.filter(t=>t.status==='running'||t.status==='pending');
+    if(!run.length){ box.innerHTML='<div style="padding:14px 0;text-align:center;color:var(--ok)">✅ 当前无运行中任务（全部空闲，轮询待命中）</div>'; return; }
+    box.innerHTML=run.map(t=>{
+      const pct=t.total_files?Math.round((t.done_files||0)*100/t.total_files):0;
+      const nm=(window._MTP&&window._MTP[t.profile_id])||('方案'+t.profile_id);
+      return '<div style="border-radius:14px;padding:16px 18px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.11);margin-bottom:12px">'
+        +'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">'
+        +'<div><b style="font-size:15px">#'+t.id+'</b> <span class="tag on" style="font-size:13px;padding:4px 12px;border-radius:9px">'+esc(nm)+'</span>'
+        +(t.status==='pending'?' <span class="tag">⏳ 排队中</span>':'')+'</div>'
+        +'<button class="btn sm bad" onclick="mtStop('+t.id+','+t.profile_id+')" style="border-radius:10px">⛔ 强制取消（不重启MT）</button></div>'
+        +'<div style="height:10px;background:rgba(255,255,255,.08);border-radius:6px;margin:13px 0 7px;overflow:hidden">'
+        +'<div style="height:100%;width:'+pct+'%;background:linear-gradient(90deg,#a855f7,#ec4899,#3b82f6);border-radius:6px;transition:width .6s"></div></div>'
+        +'<div class="hint">'+(t.done_files||0)+'/'+(t.total_files||0)+' 文件 · '+pct+'%'+(t.error_files?(' · ✕'+t.error_files):'')+' · '+esc((t.source_dir||'').replace('/主号/待整理/',''))+'</div></div>';
+    }).join('');
+  }catch(e){ box.innerHTML='<div class="hint">读取失败</div>'; }
+}
+
+async function mtLoadProfiles(){
+  const sel=document.getElementById('MT_PROF_SEL'); if(!sel)return;
+  try{
+    const d=await apiGet('/api/mt/profiles');
+    if(!(d&&d.ok)){ sel.innerHTML='<option value="">加载失败</option>'; return; }
+    window._MTP={}; const groups={};
+    d.items.forEach(p=>{
+      window._MTP[p.id]=p.name;
+      const g=p.name.indexOf('PT-')===0?'📡 PT':p.name.indexOf('MT-')===0?'🎬 MT':p.name.indexOf('RT-')===0?'📺 RT':p.name.indexOf('115')===0?'📦 115大包':p.name.indexOf('未识别')===0?'❓ 未识别':'🧰 其他';
+      (groups[g]=groups[g]||[]).push(p);
+    });
+    sel.innerHTML=Object.keys(groups).map(g=>'<optgroup label="'+g+'">'+groups[g].map(p=>'<option value="'+p.key+'">'+esc(p.name)+'</option>').join('')+'</optgroup>').join('');
+  }catch(e){ sel.innerHTML='<option value="">加载失败</option>'; }
+}
+
+async function mtRunProfile(){
+  const sel=document.getElementById('MT_PROF_SEL');
+  const v=sel&&sel.value; if(!v){ toast('先选择要运行的方案','err'); return; }
+  const nm=sel.options[sel.selectedIndex]?sel.options[sel.selectedIndex].textContent:v;
+  const r=await apiPost('/api/mt/task/start',{profile:v});
+  toast(r&&r.ok?('✅ 已触发：'+nm):('❌ '+((r&&r.msg)||'失败')),r&&r.ok?'ok':'err');
+  if(r&&r.ok) setTimeout(mtRenderRunning,4000);
 }
 
 function renderMTTaskTable(){
@@ -19036,19 +19173,21 @@ function renderMTTaskTable(){
 
     const pct=t.total_files?Math.round((t.done_files||0)*100/t.total_files):0;
 
-    const cls=t.status==='running'?'on':(t.status==='done'?'':'off');
+    const SC={running:['on','▶ 运行中'],pending:['','⏳ 排队'],done:['ok','✅ 完成'],cancelled:['off','⛔ 已取消'],failed:['bad','❌ 失败'],interrupted:['','⚠️ 中断']};
+
+    const _sc=SC[t.status]||['',t.status];
 
     const el=t.elapsed?(Math.floor(t.elapsed/60)+'分'+(t.elapsed%60)+'秒'):'—';
 
     const canStop=(t.status==='running'||t.status==='pending');
 
-    return '<tr><td>'+t.id+'</td><td>'+t.profile_id+'</td>'
+    const bar='<div style="height:6px;background:rgba(255,255,255,.09);border-radius:3px;overflow:hidden;min-width:90px"><div style="height:100%;width:'+pct+'%;background:'+(t.status==='running'?'linear-gradient(90deg,#22c55e,#84cc16)':'#6b7280')+'"></div></div>';
 
-      +'<td><span class="tag '+cls+'">'+esc(t.status)+'</span></td>'
+    return '<tr><td>'+t.id+'</td><td>'+esc((window._MTP&&window._MTP[t.profile_id])||('方案'+t.profile_id))+'</td>'
 
-      +'<td>'+t.done_files+'/'+t.total_files+(t.total_files?' ('+pct+'%)':'')
+      +'<td><span class="tag '+_sc[0]+'">'+_sc[1]+'</span></td>'
 
-      +(t.error_files?' <span style="color:var(--bad)">✕'+t.error_files+'</span>':'')+'</td>'
+      +'<td>'+bar+' <span class="hint">'+t.done_files+'/'+t.total_files+(t.total_files?' ('+pct+'%)':'')+(t.error_files?' <span style="color:var(--bad)">✕'+t.error_files+'</span>':'')+'</span></td>'
 
       +'<td>'+el+'</td>'
 
@@ -19064,7 +19203,7 @@ function renderMTTaskTable(){
 
 async function mtStop(id,prof){
 
-  const withScheme=confirm('停止任务 #'+id+'？\n\n点【确定】= 停止任务 + 强关其方案（防止轮询60秒后自动重开）\n点【取消】= 仅停止任务一次（方案继续轮询，可能马上又开新任务）\n\n（无论哪种，都会短暂重启 MediaTidy 约5~8秒）');
+  const withScheme=confirm('停止任务 #'+id+'？\n\n点【确定】= 停止任务 + 热关其方案（不重启 MT，其他任务不受影响）\n点【取消】= 仅停止任务（方案继续轮询，可能马上又开新任务）\n\n（热取消若被 MT 写回，会自动降级为重启模式兜底，届时其他任务短暂中断）');
 
   toast('停MT→改库→启MT（约5~8秒）…','info');
 
@@ -19080,8 +19219,32 @@ async function mtStop(id,prof){
 
 }
 
-async function mtStopAll(){
+async function mtCleanupInit(){
+  for(let i=0;i<10;i++){
+    const btn=document.getElementById('mtCleanupBtn');
+    if(!btn){ await new Promise(r=>setTimeout(r,500)); continue; }
+    try{
+      const d=await apiGet('/api/mt/cleanup');
+      const b=document.getElementById('mtCleanupBtn');
+      const h=document.getElementById('mtCleanupHint');
+      if(b){ if(d.cleanup_on){ b.textContent='🧹 停止所有清理（优先整理）'; b.className='btn sm bad'; } else { b.textContent='▶ 恢复清理'; b.className='btn sm acc'; } }
+      if(h) h.textContent='当前 '+d.on_count+'/'+d.total+' 个方案开启清理；停止后整理（移动/跳过）不再被清理拖慢，适合紧急上架';
+    }catch(e){}
+    return;
+  }
+}
 
+async function mtCleanupToggle(){
+  const btn=document.getElementById('mtCleanupBtn');
+  const cur=(btn&&btn.textContent.indexOf('停止')>=0);
+  if(btn){ btn.disabled=true; btn.textContent=cur?'⏳ 正在停止清理（重启MT，约8秒）…':'⏳ 正在恢复清理（重启MT，约8秒）…'; }
+  const d=await apiPost('/api/mt/cleanup',{on:cur?0:1});
+  toast(d.ok?('✅ '+d.msg):('⚠️ '+(d.msg||'失败')), d.ok?'ok':'err');
+  if(btn) btn.disabled=false;
+  mtCleanupInit();
+}
+
+async function mtStopAll(){
   const run=MTCTL.tasks.filter(t=>t.status==='running'||t.status==='pending');
 
   if(!run.length)return toast('没有运行中的任务','info');
@@ -19616,6 +19779,8 @@ async function renderPriority(){
 
   if(!d||!d.ok){v.innerHTML='<div class="card"><div class="empty">加载失败：'+esc((d&&d.msg)||'')+'</div></div>';return;}
 
+  setTimeout(ssAutoInit,600);
+
   const c=d.cfg||{}, items=d.items||[];
 
   const stChip = c.preempted
@@ -20008,7 +20173,7 @@ async function ssCard(){
 
   return `<div class="card" style="margin-top:14px"><h3>🎛 一键排序（组配对 · 移动在上 → 对应跳过在下 · 同目录成对）</h3>
 
-    <div class="sub">规则：<b>PT → 未识别 → MT → RT → 115大包 → 专属</b>；组内 <b>离线 → 转存 → 缺集 → 追新</b>；每个目录 <b>移动任务在上、对应跳过任务紧随其下</b>。写入 MT 的 sortOrder，列表即刻成对排列。</div>
+    <div class="sub">规则：<b>PT → MT → RT → 115大包 → 专属 → 其他 → 未识别（最末）</b>；组内 <b>离线 → 转存 → 缺集 → 追新</b>；每个目录 <b>移动任务在上、对应跳过任务紧随其下</b>。写入 MT 的 sortOrder，列表即刻成对排列。</div>
 
     <div class="row" style="align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap">
 
@@ -20017,6 +20182,8 @@ async function ssCard(){
       <button class="btn sm acc" onclick="ssApply()">▶ 一键应用排序</button>
 
       <button class="btn sm" onclick="ssRestore()">↩ 恢复到此方案顺序</button>
+
+      <label class="pr-lb" style="display:inline-flex;align-items:center;gap:6px"><input type="checkbox" id="ssAutoChk" onchange="ssAutoSet(this.checked)"> 每天自动恢复排序</label><span class="hint" id="ssAutoHint"></span>
 
       <label class="pr-lb">默认使用 <select id="ssDefault" style="min-width:160px">${defSel}</select></label>
 
@@ -20081,6 +20248,26 @@ async function ssApply(){
 }
 
 async function ssRestore(){await ssApply();}
+
+async function ssAutoInit(){
+  for(let i=0;i<10;i++){
+    const chk=document.getElementById('ssAutoChk');
+    if(!chk){ await new Promise(r=>setTimeout(r,500)); continue; }
+    try{
+      const d=await apiGet('/api/ssort/auto');
+      chk.checked=!!d.auto;
+      const h=document.getElementById('ssAutoHint');
+      if(h) h.textContent=d.last?('上次自动恢复：'+new Date(d.last*1000).toLocaleString('zh-CN')+(d.last_result?(' · '+d.last_result):'')):'尚未执行过（开启后每 24h 自动一次）';
+    }catch(e){}
+    return;
+  }
+}
+
+async function ssAutoSet(on){
+  const d=await apiPost('/api/ssort/auto',{on:on?1:0});
+  toast(d.ok?('✅ '+d.msg):('⚠️ '+(d.msg||'失败')), d.ok?'ok':'err');
+  if(d.ok) ssAutoInit();
+}
 
 async function ssSetDefault(){
 
@@ -20164,8 +20351,6 @@ async function renderAnnounce(){
 
   const a=d.data;
 
-  const GHCFG=(await apiGet('/api/gh/status',60000))||{};
-
   const meta=d.meta||{};
 
   const botSynced=meta.bot_synced!==false;
@@ -20244,12 +20429,6 @@ async function renderAnnounce(){
 
         <button class="btn sm" onclick="qpResetSync(this)" title="清除已展示版本记录，下次启动会重推一次">↩ 重置同步记录</button>
 
-        <button class="btn sm acc" onclick="ghPush(this)" title="把 NAS 发布源（/dockroot/openrepo）一键提交到 GitHub 仓库">🚀 同步 GitHub</button>
-
-        <button class="btn sm" onclick="ghRelease(this)" title="用版本号打 tag 并创建 GitHub Release">🏷 发布 Release</button>
-
-        <span class="sub" id="gh_state" style="margin-left:6px"></span>
-
       </div>
 
     </div>
@@ -20298,65 +20477,13 @@ async function renderAnnounce(){
 
       </div>
 
-    </div></div>
-
-    <div class="card cl-in" style="margin-top:16px">
-
-      <h3>🚀 GitHub 发布与同步</h3>
-
-      <div class="sub">把 NAS 发布源 <code>/dockroot/openrepo</code> 一键提交到你的 GitHub 仓库；Token 建议 Fine-grained PAT（只授目标仓库 Contents 读写）。Token 保存后不再回显。</div>
-
-      <div class="frm" style="margin-top:10px">
-
-        <div class="fld"><label><b>GitHub Token</b>（${esc(GHCFG.has_token?'已配置，留空 = 不修改':'未配置')}）</label><input id="gh_token" type="password" placeholder="${GHCFG.has_token?'••••••••（已保存）':'ghp_xxx / github_pat_xxx'}"></div>
-
-        <div class="fld"><label><b>仓库</b>（owner/name）</label><input id="gh_repo" value="${esc(GHCFG.repo||'')}" placeholder="yourname/media-hub"></div>
-
-        <div class="fld"><label><b>分支</b></label><input id="gh_branch" value="${esc(GHCFG.branch||'master')}" placeholder="master"></div>
-
-        <div class="fld"><label><b>PT 站点巡检清单</b>（逗号分隔域名；只探测首页，绝不试密）</label><input id="pt_sites" value="${esc(GHCFG.pt_sites||'')}" placeholder="zmpt.cc, nicept.net, kp.m-team.cc"></div>
-
-        <div class="fld"><label><b>AI 服务探测</b>（OpenAI 兼容 base 地址，留空跳过）</label><input id="ai_probe" value="${esc(GHCFG.ai_probe||'')}" placeholder="http://192.168.x.x:3065"></div>
-
-        <div class="acts" style="margin-top:8px">
-
-          <button class="btn sm acc" onclick="ghSaveCfg(this)">💾 保存发布配置</button>
-
-          <span class="sub" id="gh_state"></span>
-
-        </div>
-
-      </div>
-
-    </div>`;
+    </div></div>`;
 
   // 逐段淡入
 
   const nodes=v.querySelectorAll('.cl-in');
 
   nodes.forEach((n,i)=>{n.style.animationDelay=(i*0.09)+'s';});
-
-  ghState();  // GitHub 通道状态回显（v0.1.2）
-
-}
-
-async function ghSaveCfg(btn){
-
-  const g=(k)=>{const el=document.getElementById(k);return el?el.value.trim():''};
-
-  const cfg0={gh_repo:g('gh_repo'),gh_branch:g('gh_branch')||'master',pt_sites:g('pt_sites'),ai_probe:g('ai_probe')};
-
-  const tk=g('gh_token'); if(tk)cfg0.gh_token=tk;   // 留空=不修改已存 Token
-
-  if(btn){btn.disabled=true;}
-
-  const r=await apiPost('/api/config',{cfg:cfg0});
-
-  if(btn){btn.disabled=false;}
-
-  if(r&&r.ok){toast('✅ 发布配置已保存','ok');ghState();}
-
-  else toast('❌ 保存失败：'+((r&&r.msg)||''),'err');
 
 }
 
@@ -20409,70 +20536,6 @@ async function qpResetSync(btn){
   if(r&&r.ok){toast('✅ 同步记录已重置','ok');setTimeout(()=>{bust('/api/changelog');refreshCurrent();},800);}
 
   else{btn&&(btn.disabled=false);toast('重置失败','err');}
-
-}
-
-// ── 🚀 GitHub 同步 / 🏷 Release（v0.1.2：源树 = NAS /dockroot/openrepo，Git Data API 单 commit）──
-
-async function ghState(){
-
-  try{ const d=await apiGet('/api/gh/status',60000);
-
-    const el=document.getElementById('gh_state');
-
-    if(el) el.textContent = d&&d.configured
-
-      ? ('GitHub: '+d.repo+'（'+d.files+' 个源文件'+(d.remote&&d.remote.http===200?' · 仓库可达':' · 仓库不可达')+'）')
-
-      : 'GitHub 未配置（设置页「发布与同步」填 Token + 仓库）';
-
-  }catch(e){}
-
-}
-
-async function ghPush(btn){
-
-  const old=btn?btn.textContent:'';
-
-  if(!confirm('🚀 同步到 GitHub？\n\n把 NAS 发布源 /dockroot/openrepo 全量提交为一个 commit（未变更文件自动跳过，多余文件会删除）。\n确认仓库/分支配置无误？'))return;
-
-  if(btn){btn.disabled=true;btn.innerHTML='<span class="spin"></span>同步中…';}
-
-  const r=await apiPost('/api/gh/push',{message:''});
-
-  if(btn){btn.disabled=false;btn.textContent=old;}
-
-  if(r&&r.async&&r.job){ toast('同步已启动…','info');
-
-    const res=await pollJob(r.job);
-
-    if(res&&res.ok){ const s=res.stats||{}; toast('✅ '+res.msg+'（新增 '+s.add+' · 更新 '+s.upd+' · 未变 '+s.same+'）','ok',6000); resultPush('GitHub 同步',{结果:'✅',仓库:'',详情:res.url||res.msg}); }
-
-    else toast('❌ '+(res&&(res.msg||'同步失败')),'err',6000);
-
-  } else toast((r&&r.msg)?('❌ '+r.msg):'同步失败','err',6000);
-
-}
-
-async function ghRelease(btn){
-
-  const tag=prompt('🏷 Release 版本号（tag，如 v0.1.2）：');
-
-  if(!tag)return;
-
-  const name=prompt('Release 标题（留空用默认）：', '')||'';
-
-  if(!confirm('确认发布 Release '+tag+' ？\n\n将创建 tag 并发布 Release（正文默认引用 CHANGELOG）。'))return;
-
-  if(btn){btn.disabled=true;btn.innerHTML='<span class="spin"></span>发布中…';}
-
-  const r=await apiPost('/api/gh/release',{tag,name,body:''});
-
-  if(btn){btn.disabled=false;btn.textContent='🏷 发布 Release';}
-
-  if(r&&r.ok){toast('✅ '+r.msg,'ok');if(r.url)window.open(r.url,'_blank');}
-
-  else toast('❌ '+(r&&r.msg||'发布失败'),'err',6000);
 
 }
 
@@ -21225,6 +21288,10 @@ async function renderOverview(){
         <span class="sub" id="ov_ctr_note">容器内存 / CPU 读取中…</span>
 
       </div>
+
+      <!-- ★ 2026-11-05 KFC / KFC2 双服务器筛选条（合并两台会话后按库过滤）-->
+
+      <div class="row" id="ov_sess_filter" style="gap:6px;flex-wrap:wrap;margin:2px 0 8px"></div>
 
       <div id="ov_sessions"><div class="sub">读取中…</div></div>
 
@@ -22490,6 +22557,38 @@ async function ovMediaPanel(){
 
 
 
+// ★ 2026-11-05 KFC / KFC2 双服务器观看筛选（合并会话列表后按来源过滤，纯 display 切换）
+const OVS = { all: [], srv: '' };
+function ovSessBuildFilter(){
+  const bar=document.getElementById('ov_sess_filter'); if(!bar)return;
+  const cnt={}; OVS.all.forEach(x=>{const k=x.server_key||'emby'; cnt[k]=(cnt[k]||0)+((x.playing&&!x.paused)?1:0);});
+  const nAll=OVS.all.filter(x=>x.playing&&!x.paused).length;
+  const opt=(v,lab,n,tone)=>'<button class="btn sm'+(OVS.srv===v?' acc':'')+'" '
+    +'onclick="ovSessSetFilter(\''+v+'\')" '+(tone?('style="border-color:'+tone+'"'):'')+'>'
+    +lab+' <b style="font-variant-numeric:tabular-nums">'+n+'</b></button>';
+  // ★ KFC2 常驻：用户明确要「单独列一个 KFC2 播放列表」，即使此刻 0 人在播也要能看到入口
+  bar.innerHTML=opt('','全部',nAll,'')
+    +opt('emby','🎬 KFC',cnt['emby']||0,'')
+    +opt('emby_adult','🔞 KFC2',cnt['emby_adult']||0,'');
+  ovSessApplyFilter();
+}
+function ovSessSetFilter(v){ OVS.srv=(OVS.srv===v?'':v); ovSessBuildFilter(); }
+function ovSessApplyFilter(){
+  const box=document.getElementById('ov_sessions'); if(!box)return;
+  let shown=0;
+  box.querySelectorAll('[data-srv]').forEach(el=>{
+    const ok=!OVS.srv || el.getAttribute('data-srv')===OVS.srv;
+    el.style.display=ok?'':'none'; if(ok)shown++;
+  });
+  let ph=document.getElementById('ov_sess_empty');
+  if(!shown){
+    if(!ph){ph=document.createElement('div');ph.id='ov_sess_empty';ph.className='empty';
+      ph.style.cssText='padding:12px;color:var(--sub)';
+      ph.textContent='这个服务器当前没有播放中的会话';box.appendChild(ph);}
+    ph.style.display='';
+  } else if(ph){ph.style.display='none';}
+}
+
 async function ovSessions(){
 
   const el=document.getElementById('ov_sessions'); if(!el)return;
@@ -22500,20 +22599,16 @@ async function ovSessions(){
 
   const ss=smSessSort(d.sessions||[]);
 
+  // ★ 2026-11-05 缓存完整会话 + 构建/刷新 KFC·KFC2 筛选条
+  OVS.all=ss;
+  {const _fb=document.getElementById('ov_sess_filter'); if(_fb)_fb.innerHTML='';}
   if(!ss.length){RTX.patchDiff('ov_sessions','<div class="empty" style="padding:12px">👤 当前无人观看</div>');return;}
+  ovSessBuildFilter();
 
-  // ★★ 双实例来源筛选条（KFC / KFC2 隔离验证）：点按切换 window.__ovSrvFlt 并整体重渲染
-  const _cur=window.__ovSrvFlt||'all';
+  const _cnt={}; ss.forEach(s=>{const k=(s.server_key||'emby');_cnt[k]=(_cnt[k]||0)+1;});
   const _has2=ss.some(s=>(s.server_key||'emby')==='emby_adult');
-  const _opts=[['all','全部']];
-  if(ss.some(s=>(s.server_key||'emby')!=='emby_adult'))_opts.push(['emby','KFC']);
-  if(_has2)_opts.push(['emby_adult','KFC2']);
-  const _btn=(k,label)=>{const on=(k===_cur);return '<button class="ov-srv-btn" data-k="'+k+'" style="cursor:pointer;font-size:11px;font-weight:700;padding:3px 12px;border-radius:99px;border:1px solid '+(on?'var(--acc)':'rgba(255,255,255,.16)')+';background:'+(on?'var(--acc)':'rgba(255,255,255,.05)')+';color:'+(on?'#fff':'var(--sub)')+'">'+label+'</button>';};
-  const _bar='<div class="row" style="gap:6px;flex-wrap:wrap;margin:2px 0 8px">'+_opts.map(o=>_btn(o[0],o[1])).join('')+'</div>';
-  const _ss=(_cur==='all')?ss:ss.filter(s=>(s.server_key||'emby')===_cur);
-  if(!_ss.length){RTX.patchDiff('ov_sessions', _bar+'<div class="empty" style="padding:12px">📭 该实例当前无人观看</div>');return;}
-
-  RTX.patchDiff('ov_sessions', _bar + _ss.map((x,xi)=>{
+  const _instHtml=(_has2||ss.some(s=>(s.server_key||'emby')!=='emby_adult'))?'<div class="row" style="gap:8px;flex-wrap:wrap;margin:2px 0 8px">'+((ss.some(s=>(s.server_key||'emby')!=='emby_adult'))?'<span style="display:inline-flex;align-items:center;gap:6px;font-size:11px;padding:3px 10px;border-radius:99px;border:1px solid rgba(34,197,94,.5);background:rgba(34,197,94,.12);color:#a4e9c1"><i style="width:7px;height:7px;border-radius:50%;background:#22c55e;display:inline-block"></i>KFC · 在线 · '+(_cnt['emby']||0)+' 会话</span>':'')+(_has2?'<span style="display:inline-flex;align-items:center;gap:6px;font-size:11px;padding:3px 10px;border-radius:99px;border:1px solid rgba(251,191,36,.5);background:rgba(251,191,36,.12);color:#fbbf24"><i style="width:7px;height:7px;border-radius:50%;background:#fbbf24;display:inline-block"></i>KFC2 · 在线 · '+(_cnt['emby_adult']||0)+' 会话</span>':'')+'</div>':'';
+  RTX.patchDiff('ov_sessions', _instHtml + ss.map((x,xi)=>{
 
     const pct=Math.max(0,Math.min(100,x.pct||0));
 
@@ -22591,123 +22686,80 @@ async function ovSessions(){
 
       :'<span class="st-chip direct"><span class="sc-i">⇄</span><span class="sc-t">直连原画</span></span>';
 
-    const _ini=esc((x.user||'?').slice(0,1));
-    const _avaCore='<span style="position:absolute;inset:0;display:inline-flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:var(--sub)">'+_ini+'</span>'
-      +(x.user_avatar
-        ? '<img src="'+esc(x.user_avatar)+'" style="position:absolute;inset:0;width:34px;height:34px;border-radius:50%;object-fit:cover;border:1px solid rgba(255,255,255,.12)"'
-          +' onerror="this.style.display=\'none\'"'
-          +' onload="if(!this.naturalWidth)this.style.display=\'none\'">'
-        : '');
-    const _avaWrap='<span style="position:relative;display:inline-flex;width:34px;height:34px;flex:0 0 auto;vertical-align:middle">'+_avaCore+'</span>';
-    const ava = x.tg_url
-      ? '<a href="'+esc(x.tg_url)+'" target="_blank" title="点击打开 '+esc(x.user)+' 的 TG 主页">'+_avaWrap+'</a>'
-      : _avaWrap;
-    const who=x.tg_url
-
-      ? '<b><a href="'+esc(x.tg_url)+'" target="_blank" style="color:var(--acc)">'+esc(x.user)+'</a></b>'
-
-        +(x.tg_username?'<span style="color:var(--sub);font-size:11.5px"> '+esc(x.tg_username)+'</span>':'')
-
-      : '<b>'+esc(x.user)+'</b>';
+    // ★★ 2026-11-06：用户头像（Emby 主头像，可点跳 TG 主页）+ 用户名 + TG 信息
+    const ava = x.user_avatar
+      ? (x.tg_url
+          ? '<a href="'+esc(x.tg_url)+'" target="_blank" title="点击打开 '+esc(x.user)+' 的 TG 主页">'
+            +'<img src="'+esc(x.user_avatar)+'" class="ovss-ava" onerror="this.style.visibility=\'hidden\'"></a>'
+          : '<img src="'+esc(x.user_avatar)+'" class="ovss-ava" onerror="this.style.visibility=\'hidden\'">')
+      : '<span class="ovss-ava ovss-ava-empty">'+esc((x.user||'?').slice(0,1))+'</span>';
+    const who='<b>'+(x.tg_url
+          ? '<a href="'+esc(x.tg_url)+'" target="_blank" style="color:var(--acc)">'+esc(x.user)+'</a>'
+          : esc(x.user))+'</b>'
+        + (x.tg_username?' <span class="ovss-tgu">@'+esc(x.tg_username)+'</span>':'')
+        + (x.tg?' <span class="ovss-tgid">TG:'+esc(x.tg)+'</span>':'');
 
     // ★ V1.44：把后端 quality 串解析成「分辨率/动态范围/色深/编码/音频/码率」6 个字段，
 
     //   网格显示，一眼看到全部画质信息（用户点名：码率/大小/分辨率/色深等都要显示）。
 
     const segs=String(x.quality||'').split('·').map(s=>s.trim()).filter(Boolean);
-
     const pick=(re)=>{const s=segs.find(z=>re.test(z));return s||'';};
-
-    const res=pick(/^(4K|2K|1080|720|\d{3,4}p|\d{3,4}×\d{3,4})/i)||pick(/^\d{3,4}×\d{3,4}$/i);
-
-    const dr=String(x.dr||pick(/^Dolby Vision(?: P[4-8])?|^HDR10\+|^HDR10|^HLG|^SDR/i)||pick(/Dolby Vision|HDR10|HLG|SDR|DV|杜比/i)||'');
-
+    const resLbl=pick(/^(4K|2K|1080|720|\d{3,4}p|\d{3,4}×\d{3,4})/i)||pick(/^\d{3,4}×\d{3,4}$/i);
+    const dr=x.dr||pick(/^Dolby Vision(?: P[4-8])?|^HDR10\+|^HDR10|^HLG|^SDR/i)||pick(/Dolby Vision|HDR10|HLG|SDR|DV|杜比/i)||'';
     const depth=pick(/\d{1,2}bit/i);
-
     const codec=pick(/^(HEVC|H\.?26[45]|AVC|H26[45]|MPEG)/i)||pick(/HEVC|H265|H264/i);
-
-    const audio=pick(/(Atmos|TrueHD|DTS|EAC3|DDP|AC3|FLAC|AAC)/i)||pick(/^(DTS|EAC3|DDP|AAC|FLAC)/i);
-
+    const audio=pick(/(Atmos|TrueHD|DTS|DDP|EAC3|AC3|FLAC|AAC)/i)||pick(/^(DTS|EAC3|DDP|AAC|FLAC)/i);
     const br=pick(/Mbps/i);
-
-    const qs=[['分辨率',res],['动态范围',dr],['色深',depth],['编码',codec],['音频',audio],['码率',br]]
-
-      .map(q=>'<div class="qs-cell"><span>'+q[0]+'</span><b>'+esc(q[1]||'—')+'</b></div>').join('');
-
+    const src=x.source||'—';
+    const ctn=x.container||'';
+    const fps=x.fps||'';
+    const resPx=x.res_px||'';
+    const _resTxt=(resLbl||'未知')+(resPx?(' / '+resPx):'');
+    const _codecTxt=(codec||'未知')+(ctn?(' · '+ctn):'');
+    const _brTxt=(br||'未知')+(fps?(' @ '+fps+'fps'):'');
+    const _ipDev=(x.ip?x.ip:'—')+(x.device?(' · '+x.device):'');
+    const _g=(k,v)=>'<div style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:3px;min-width:0"><span style="font-size:10px;color:var(--sub);letter-spacing:.4px">'+k+'</span><b style="font-size:13px;color:var(--txt);font-weight:600;word-break:break-word">'+esc(v||'—')+'</b></div>';
+    const grid=_g('分辨率',_resTxt)+_g('片源',src)+_g('动态范围',dr)
+      +_g('视频编码',_codecTxt)+_g('码率',_brTxt)+_g('音频',audio)
+      +_g('色深',depth)+_g('文件大小',x.size||'未知')+_g('来源IP',_ipDev);
     const _imgs=(x.img_list&&x.img_list.length)?x.img_list:(x.img?[x.img]:[]);
-
     const img=(x.session_id||x.item_name||'')?(x.img
-
-      ?`<img src="${esc(x.img)}" loading="lazy" `
-
-      +`style="width:128px;height:190px;object-fit:cover;border-radius:12px;flex-shrink:0;`
-
-      +`align-self:flex-start;display:block;background:rgba(255,255,255,.05)" `
-
-      +`onerror="smSessImgNext(this,'${esc(x.item_name||'')}','${esc(x.tmdb||'')}')">`
-
-      :`<div class="ss-ph">🎬</div>`):'';
-
-    const _ord=(x.first_ts||0);
-
-    const card='<div class="card ovss-rich" data-srv="'+esc(x.server_key||'emby')+'" style="margin:7px 0;padding:12px;background:rgba(14,165,233,.06);'
-
-      +'display:flex;gap:14px;align-items:stretch;position:relative">'
-
+      ?'<img src="'+esc(x.img)+'" loading="lazy" style="width:128px;height:190px;object-fit:cover;border-radius:12px;flex-shrink:0;align-self:flex-start;display:block;background:rgba(255,255,255,.05)" onerror="smSessImgNext(this,\''+esc(x.item_name||'')+'\',\''+esc(x.tmdb||'')+'\')">'
+      :'<div class="ss-ph">🎬</div>'):'';
+    const card='<div class="card ovss-rich" data-srv="'+esc(x.server_key||'emby')+'" style="margin:7px 0;padding:14px;background:rgba(14,165,233,.06);display:flex;gap:16px;align-items:stretch;position:relative">'
       +img
-
       +'<div style="flex:1;min-width:0;align-self:stretch;display:flex;flex-direction:column;justify-content:center">'
-
       +'<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">'
-
-      +'<span style="font-size:14.5px;font-weight:600;color:var(--txt)">🎬 '+esc(x.item_name)+'</span>'
+      +'<span style="font-size:15px;font-weight:600;color:var(--txt)">🎬 '+esc(x.item_name)+'</span>'
       +(x.server?'<span class="rnk-src" style="'+(x.server_key==='emby_adult'?'color:#fbbf24;background:rgba(251,191,36,.16);border-color:rgba(251,191,36,.45)':'')+'">'+esc(x.server)+'</span>':'')
       +(dr?'<span style="display:inline-block;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:99px;color:#f0e2ff;white-space:nowrap;vertical-align:middle;background:linear-gradient(100deg,rgba(168,85,247,.30),rgba(56,189,248,.20));border:1px solid rgba(168,85,247,.5)" title="动态范围">'+esc(dr)+'</span>':'')
-
       +(x.ep?'<span class="tag acc" style="font-size:10.5px">'+esc(x.ep)+'</span>':'')
-
       +'<span style="color:var(--sub);font-size:11.5px">'+esc(x.type)+'</span></div>'
-
       +'<div class="row" style="gap:6px;flex-wrap:wrap;margin-top:6px;font-size:12px">'
-
       +ava+who
-
       +(x.tg?'<span style="color:var(--sub);font-size:11.5px">UID '+esc(x.tg)+'</span>':'')
-
       +'<span class="sp"></span>'+stTag+tcTag+'</div>'
-
       +'<div style="margin-top:9px">'+bar+'</div>'
-
-      +'<div class="qs-grid" style="margin-top:10px">'+qs+'</div>'
-
-      +'<div class="row" style="gap:14px;flex-wrap:wrap;margin-top:9px;font-size:11.5px">'
-
-      +'<span><span style="color:var(--sub)">大小</span> <b style="color:var(--txt)">'+esc(x.size||'未知')+'</b></span>'
-
-      +'<span><span style="color:var(--sub)">设备</span> <b style="color:var(--txt)">'+esc(x.device||'—')+'</b></span>'
-
-      +'<span><span style="color:var(--sub)">完整画质</span> <b style="color:var(--txt)">'+esc(x.quality||'—')+'</b></span>'
-
-      +'</div>'
-
-      +'<div class="row" style="gap:8px;flex-wrap:wrap;margin-top:6px;font-size:11px;color:var(--sub)">'
-
+      +'<div style="margin-top:10px;display:grid;grid-template-columns:repeat(3,1fr);gap:7px">'+grid+'</div>'
+      +'<div class="row" style="gap:8px;flex-wrap:wrap;margin-top:9px;font-size:11px;color:var(--sub)">'
       +'<span>🎮 '+esc(x.client||'未知')+'</span>'+cvTag
-
       +(x.app_ver&&x.app_ver!==x.client_ver?'<span>'+esc(x.app_ver)+'</span>':'')
-
-      +(x.ip?'<span>🌐 '+esc(x.ip)+'</span>':'')
-
       +'</div>'
-
+      +'<div class="row" style="gap:8px;flex-wrap:wrap;margin-top:6px;font-size:11px">'
+      +'<button class="btn-min" data-det="'+xi+'" style="cursor:pointer;font-size:11px;padding:3px 10px;border-radius:99px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.05);color:var(--sub)">详细参数 ＋</button>'
+      +'</div>'
+      +'<div id="emb_'+xi+'_det" style="display:none;margin-top:8px;font-size:11px;color:var(--sub);line-height:1.7">'
+      +'播放器版本：'+esc(x.client_ver||'—')+'　Emby 实例：'+esc(x.server||'—')+'（'+esc(x.server_key||'')+'）<br>'
+      +'帧率：'+esc(fps||'—')+'　封装：'+esc(ctn||'—')+'　片源：'+esc(src||'—')+'<br>'
+      +'TMDB：'+esc(x.tmdb||'—')+(x.path?'<br>文件：'+esc(x.path):'')+'</div>'
       +'</div></div>';
-
     return card;
 
   }).join(''));
-
-  el.querySelectorAll('.ov-srv-btn').forEach(b=>{ b.onclick=()=>{ try{ window.__ovSrvFlt=b.dataset.k; ovSessions(); }catch(e){} }; });
-
+  document.querySelectorAll('#ov_sessions .btn-min').forEach(b=>{ b.onclick=()=>{ try{ const d=document.getElementById('emb_'+b.dataset.det+'_det'); if(d){ const open=d.style.display!=='none'; d.style.display=open?'none':'block'; b.textContent=open?'详细参数 ＋':'收起参数 －'; } }catch(e){} }; });
+  // ★ 2026-11-05 渲染后按当前筛选隐藏非选中来源卡片
+  ovSessApplyFilter();
 }
 
 async function smSessImgNext(el, title, tmdb){
@@ -24430,6 +24482,10 @@ async function ovCtrWatch(){
 
   const emPlay=emSess.filter(x=>!x.paused&&x.playing).length;
 
+  // ★ 2026-11-05 按来源实例拆分播放数（server_key：emby=KFC / emby_adult=KFC2）
+  const emPlayKfc=emSess.filter(x=>!x.paused&&x.playing&&(x.server_key||'emby')==='emby').length;
+  const emPlayKfc2=emSess.filter(x=>!x.paused&&x.playing&&x.server_key==='emby_adult').length;
+
   // 展示清单：受管 11 个服务 + 2 个 Emby 库容器（成人库不在 SERVICES 里但必须能看到内存）
 
   const rows=[];
@@ -24490,7 +24546,7 @@ async function ovCtrWatch(){
 
     if((r.nm==='emby-main'||r.nm==='emby-adult')){
 
-      const n=(r.nm==='emby-adult')?emSess.filter(x=>String(x.device||'').indexOf('8896')>=0||String(x.user||'').indexOf('KFC2')>=0).length:emPlay;
+      const n=(r.nm==='emby-adult')?emPlayKfc2:emPlayKfc;
 
       badge=n>0?('<span class="tag on" style="font-size:10px">▶ 播放 '+n+'</span>'):'<span class="sub" style="font-size:10px">空闲</span>';
 
@@ -25665,6 +25721,26 @@ function _ovr_days_ctl(){
 }
 
 function ovRankSetDays(d){ OVR.days=d; ovRank(); }
+// ★ 2026-11-06 用户要求：点排名行 → 直接跳「播放数据」页并按该用户过滤
+function ovRankGotoPlays(uid, name){
+  if(!uid&&!name)return;
+  switchTab('plays');
+  let tried=0;
+  const t=setInterval(()=>{
+    tried++;
+    const users=(window.PLS&&Array.isArray(PLS.users))?PLS.users:[];
+    if(!users.length&&tried<=12)return;           // 用户清单还没到，继续等
+    let hit=null;
+    if(uid)hit=users.find(u=>String(u.id||'')===String(uid));
+    if(!hit&&name)hit=users.find(u=>String(u.name||'')===String(name))
+      ||users.find(u=>{const a=String(u.name||''),b=String(name);return a&&b&&(a.indexOf(b)>=0||b.indexOf(a)>=0);});
+    clearInterval(t);
+    if(hit){ PLS.user=hit.id; }
+    else if(uid){ /* 下拉只列有报表记录的用户；点谁看谁 → 动态注入再选中 */
+      PLS.users.push({id:uid,name:name||uid,n:0}); PLS.user=uid; }
+    if(PLS.user){ try{plsF('user',PLS.user);}catch(e){} if(typeof renderPlays==='function')renderPlays(); }
+  },400);
+}
 
 function ovRankSetKind(k){ OVR.kind=k; ovRank(); }
 
@@ -25790,7 +25866,7 @@ async function ovRank(){
 
         ? ('<span class="rnk-av '+_gen+'" title="'+esc(x.name)+'" style="background:transparent">'
 
-           +'<img src="'+esc(x.avatar)+'" loading="lazy" alt="" onerror="'+_dead+'" onload="if(!this.naturalWidth){'+_dead+'}"></span>')
+           +'<img src="'+esc(x.avatar)+'" loading="lazy" alt="" onerror="'+_dead+'"></span>')
 
         : ('<span class="rnk-av '+_gen+'" title="'+esc(x.name)+'">'+esc(ini)+'</span>');
 
@@ -25822,15 +25898,29 @@ async function ovRank(){
 
     if(x.server_txt)meta.push('<span class="rnk-src">'+esc(x.server_txt)+'</span>');
 
+    // ★ 2026-11-06 用户要求：排名行显示 Emby 用户名/TG 用户名/TGID 且可点击跳转。
+    //   TG 三件套来自后端 _rank_merge 新补的 tg/tg_username/tg_url 字段。
+    if(isUser&&x.tg_url)meta.push('<a class="rnk-src" style="text-decoration:none" href="'+esc(x.tg_url)
+
+      +'" target="_blank" rel="noopener" title="TG 用户名，点击打开 TG 会话">✈ '+esc(x.tg_username||('ID '+x.tg))+'</a>');
+
+    if(isUser&&x.tg&&x.tg_username)meta.push('<span class="sub" title="TG 数字 ID">ID '+esc(x.tg)+'</span>');
+
     if(x.client)meta.push('<span class="sub">'+esc(x.client)+'</span>');
 
     if(x.type)meta.push('<span class="sub">'+esc(x.type)+'</span>');
 
     if(x.media)meta.push('<span class="rnk-mq" title="'+esc(x.media)+'">'+esc(x.media)+'</span>');
 
-    // ★★ v1.22 S8b：排名行同样挂 mh-row
+    // ★★ v1.22 S8b：排名行同样挂 mh-row；用户行整行可点 → 跳「播放数据」按此人过滤
 
-    return '<div class="rnk-row mh-row'+(top3?' top':'')+'" title="'+esc(x.name)+'">'
+    return '<div class="rnk-row mh-row'+(top3?' top':'')+(isUser?' rnk-go':'')+'"'
+
+      +(isUser?(' onclick="ovRankGotoPlays(\''+esc(String(x.uid||''))+'\',\''+esc(String(x.name||'').replace(/'/g,"\\'"))+'\')"'
+
+        +' title="点击查看 '+esc(x.name)+' 的个人播放记录"'):'')
+
+      +' data-user="'+esc(x.name||'')+'">'
 
       +'<span class="rk">'+medal(x.rank)+'</span>'
 
@@ -31992,6 +32082,11 @@ async function ctrLive(){
 
   const emPlay=emSess.filter(x=>!x.paused&&x.playing).length;
 
+  // ★ 2026-11-05 会话自带 server_key（emby=KFC / emby_adult=KFC2），
+  //   不再用「device 含 8896 / user 含 KFC2」字符串猜——那是 KFC2 徽标常年不准的根因
+  const _pk=(k)=>emSess.filter(x=>!x.paused&&x.playing&&(x.server_key||'emby')===k).length;
+  const emPlayKfc=_pk('emby'), emPlayKfc2=_pk('emby_adult');
+
   const qbDl=(qb&&qb.ok)?((qb.global&&qb.global.dl)||(qb.downloading||0)):0;
 
   const qbSeed=(qb&&qb.ok)?((qb.global&&qb.global.seed)||(qb.seeding||0)):0;
@@ -32002,15 +32097,13 @@ async function ctrLive(){
 
   const bdg={};
 
-  bdg['emby-main'] = emPlay>0 ? ('play','▶ '+emPlay) : '';
+  bdg['emby-main'] = emPlayKfc>0 ? ['play','▶ '+emPlayKfc] : '';
 
-  bdg['emby-adult'] = (emSess.filter(x=>String(x.device||'').indexOf('8896')>=0||String(x.user||'').indexOf('KFC2')>=0).length>0)
+  bdg['emby-adult'] = emPlayKfc2>0 ? ['play','▶ '+emPlayKfc2] : '';
 
-    ? ('play','▶ '+emSess.filter(x=>String(x.device||'').indexOf('8896')>=0||String(x.user||'').indexOf('KFC2')>=0).length) : '';
+  if(qbDl>0||qbSeed>0) bdg['qbittorrent']=['dl','⬇ '+qbDl+' · 🌱 '+qbSeed];
 
-  if(qbDl>0||qbSeed>0) bdg['qbittorrent']=('dl','⬇ '+qbDl+' · 🌱 '+qbSeed);
-
-  if(mtRun) bdg['mediatidy']=('tidy','🧹 整理中');
+  if(mtRun) bdg['mediatidy']=['tidy','🧹 整理中'];
 
   const bdgSig=Object.keys(bdg).sort().map(k=>k+bdg[k][0]+bdg[k][1]).join('|');
 
@@ -32770,6 +32863,128 @@ async function renderDiagnose(){
 
   updateHealthPill(d);
 
+  }
+
+// ═══════════ MT 错误诊断台（mtdiag）══════════
+async function renderMTDiag(){
+  const v=document.getElementById('view');
+  v.innerHTML='<div class="empty"><span class="spin"></span> 加载中…</div>';
+  const d=await apiGet('/api/mt/diag?w=30');
+  const rules=d.rules||[];
+  const sevOrder={critical:0,high:1,medium:2,low:3};
+  const sevIc={critical:'🔴',high:'🟠',medium:'🟡',low:'🟢'};
+  const sevColor={critical:'#ef4444',high:'#f97316',medium:'#eab308',low:'#22c55e'};
+  rules.sort((a,b)=>(sevOrder[a.sev]??9)-(sevOrder[b.sev]??9));
+  const cnt={critical:0,high:0,medium:0,low:0};
+  rules.forEach(r=>{ if(r.count>0) cnt[r.sev]=(cnt[r.sev]||0)+1; });
+  let html='';
+  html+=`<div class="card" style="margin-bottom:14px">
+    <h3>🩺 MT 错误诊断台 <span class="sub">聚合 CD2 / MediaTidy 日志，匹配已知错误 → 详细根因 + 分步解决方案；默认全部手动由你选择执行，可对单条错误开启自动监控</span></h3>
+    <div class="sub">近 30 分钟命中：🔴 严重 <b>${cnt.critical}</b> · 🟠 高 <b>${cnt.high}</b> · 🟡 中 <b>${cnt.medium}</b> · 🟢 低 <b>${cnt.low}</b> ｜ MT 运行中任务 <b>${d.mt_running||0}</b></div>
+    <div class="acts" style="margin-top:10px">
+      <button class="btn sm acc" onclick="renderMTDiag()">🔄 重新扫描</button>
+      <button class="btn sm" onclick="mtDiagShowLog()">📜 自动处理记录</button>
+    </div></div>`;
+  rules.forEach(r=>{
+    const active=r.count>0;
+    const fixbtn = r.fix ? `<button class="btn sm ${active?'bad':'warn'}" onclick="mtDiagFix('${r.id}',this)">🛠 执行修复方案</button>` : `<span class="hint">需人工处理（无自动修复，按下方步骤操作）</span>`;
+    const autoCtl = r.auto ? `<label class="sw"><input type="checkbox" ${r.auto_on?'checked':''} onchange="mtDiagAuto('${r.id}',this.checked,this)"><span class="swx"></span></label> 🔔 自动监控（出现即自动修复）` : `<span class="hint">不支持自动（需人工按步骤处理）</span>`;
+    html+=`<div class="card" style="margin-top:12px;border-left:4px solid ${active?(sevColor[r.sev]||'#3a3f55'):'#3a3f55'}">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <div><span class="badge">${sevIc[r.sev]||'•'} ${r.sev}</span> <b>${esc(r.name)}</b> <span class="tag">${esc(r.cat)}</span></div>
+        <div style="font-size:12px;color:${active?'var(--bad)':'var(--ok)'};text-align:right">${active?('命中 '+r.count+' 次'+(r.last?(' · 最近 '+r.last):'')):'✅ 未命中'}</div>
+      </div>
+      <details style="margin-top:8px" ${active?'open':''}>
+        <summary style="cursor:pointer;color:var(--acc)">详细根因与分步解决方案（共 ${(r.steps&&r.steps.length)||0} 步）▾</summary>
+        <div style="margin-top:8px">
+          <div><b>📌 根因：</b>${esc(r.cause)}</div>
+          ${(r.steps&&r.steps.length)?('<div style="margin-top:8px"><b>💡 解决方案（按顺序执行）：</b><ol style="margin:6px 0 0 18px;padding:0">'+r.steps.map(s=>'<li style="margin:4px 0">'+esc(s)+'</li>').join('')+'</ol></div>'):('<div style="margin-top:6px"><b>💡 解决方案：</b>'+esc(r.solution||'')+'</div>')}
+          ${r.samples&&r.samples.length?('<div style="margin-top:8px"><b>🧾 最近错误样例：</b><pre style="white-space:pre-wrap;font-size:11px;max-height:130px;overflow:auto;background:#1b1e2b;padding:8px;border-radius:6px;margin:0">'+r.samples.map(esc).join('\n')+'</pre></div>'):''}
+        </div>
+      </details>
+      <div style="margin-top:10px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+        ${fixbtn}
+        <span style="display:inline-flex;gap:6px;align-items:center">${autoCtl}${r.auto_risk&&r.auto_risk!=='na'?(' <span class="hint">自动修复风险:'+r.auto_risk+'</span>'):''} ${r.auto_on?'<span style="color:var(--ok)">● 监控中</span>':'<span class="hint">○ 手动模式</span>'}</span>
+      </div>
+    </div>`;
+  });
+  if(!rules.length) html+='<div class="empty">暂无规则</div>';
+  if(d.mt_pending&&d.mt_pending.length){
+    html+=`<div class="card" style="margin-top:14px"><h3>📦 MT 失败任务堆积（pending）</h3><div class="sub">reason_code 分布（多因 115 断连连锁，先修 CD2）</div><table class="tbl"><thead><tr><th>reason_code</th><th>数量</th></tr></thead><tbody>`;
+    d.mt_pending.forEach(p=>{ html+=`<tr><td>${esc(p.code||'(空)')}</td><td>${p.n}</td></tr>`; });
+    html+='</tbody></table></div>';
+  }
+  html+=`<div class="card" id="mtDiagLogBox" style="margin-top:14px;display:none"><h3>📜 自动处理记录</h3><pre id="mtDiagLog" style="white-space:pre-wrap;font-size:12px;max-height:50vh;overflow:auto;background:#1b1e2b;padding:10px;border-radius:6px"></pre></div>`;
+  v.innerHTML=html;
+}
+
+async function mtDiagFix(rule,btn){
+  btn.disabled=true; const old=btn.textContent; btn.textContent='修复中…';
+  try{
+    const d=await apiPost('/api/mt/diag/fix',{rule});
+    toast(d.ok?('✅ '+d.msg):('⚠️ '+(d.msg||'失败')), d.ok?'ok':'err');
+    if(d.ok) setTimeout(renderMTDiag,1500);
+  }catch(e){ toast('请求失败','err'); }
+  btn.disabled=false; btn.textContent=old;
+}
+
+async function mtDiagAuto(rule,on,el){
+  const d=await apiPost('/api/mt/diag/auto',{rule,on:on?1:0});
+  toast(d.ok?('✅ '+d.msg):('⚠️ '+(d.msg||'失败')), d.ok?'ok':'err');
+  if(d.ok) setTimeout(renderMTDiag,800);
+}
+
+async function mtDiagShowLog(){
+  const box=document.getElementById('mtDiagLogBox');
+  const pre=document.getElementById('mtDiagLog');
+  if(box.style.display==='block'){ box.style.display='none'; return; }
+  try{
+    const d=await apiGet('/api/mt/diag/log?n=60');
+    pre.textContent=(d.lines&&d.lines.length)?d.lines.join('\n'):'（暂无自动处理记录）';
+  }catch(e){ pre.textContent='读取失败'; }
+  box.style.display='block';
+  box.scrollIntoView({behavior:'smooth'});
+}
+
+// ═══════════ 字幕同步（subsync）══════════
+async function renderSubSync(){
+  const v=document.getElementById('view');
+  v.innerHTML='<div class="empty"><span class="spin"></span> 加载中…</div>';
+  const d=await apiGet('/api/mt/subsync');
+  const s=d.stats||{};
+  const running=!!d.running;
+  let html=`<div class="card" style="margin-bottom:14px">
+    <h3>🔤 字幕同步 <span class="sub">遍历 strm 本地库，对照 115 云端目录，把云端有而本地没有的字幕下载到本地（Emby 播 strm 时外挂字幕必须与视频同目录同名）</span></h3>
+    <div class="sub">规则：① 字幕与视频同名（含 .chi/.chs 尾缀）→ 按同名配对；② 电影目录（≤2 个版本）里的通用字幕 → 每个版本各配一份 <b>.chi</b>；③ 电视剧目录里的非同名字幕 → 列入跳过清单人工判断。下载后自动可见，无需重启。</div>
+    <div class="acts" style="margin-top:10px">
+      <button class="btn sm acc" id="subsyncRunBtn" ${running?'disabled':''} onclick="subSyncRun(this)">${running?'⏳ 扫描中…':'🔍 立即扫描'}</button>
+      <label class="sw"><input type="checkbox" ${d.auto?'checked':''} onchange="subSyncAuto(this.checked)"><span class="swx"></span></label> 自动同步（每 30 分钟一轮）
+    </div>
+    ${s.last_run?`<div class="hint" style="margin-top:10px">上次扫描：<b>${esc(s.last_run)}</b> · 扫描目录 <b>${s.dirs||0}</b> · 下载 <b style="color:var(--ok)">${s.downloaded||0}</b> · 跳过 <b>${s.skipped||0}</b> · 失败 <b style="color:${(s.errors||0)>0?'var(--bad)':'inherit'}">${s.errors||0}</b> · 耗时 ${s.elapsed_s||0}s</div>`:'<div class="hint" style="margin-top:10px">尚未扫描过，点「立即扫描」开始（全量遍历约需几分钟，后台运行）</div>'}
+  </div>`;
+  if(d.items&&d.items.length){
+    html+=`<div class="card" style="margin-top:12px"><h3>⬇️ 本次已下载字幕（${d.items.length}）</h3><pre style="white-space:pre-wrap;font-size:11px;max-height:300px;overflow:auto;background:#1b1e2b;padding:10px;border-radius:6px;margin:0">${d.items.map(esc).join('\n')}</pre></div>`;
+  }
+  if(d.skipped_items&&d.skipped_items.length){
+    html+=`<details class="card" style="margin-top:12px"><summary style="cursor:pointer;color:var(--acc)"><h3 style="display:inline">⏭ 跳过清单（${d.skipped_items.length}，多为剧集目录通用字幕）</h3></summary><pre style="white-space:pre-wrap;font-size:11px;max-height:240px;overflow:auto;background:#1b1e2b;padding:10px;border-radius:6px;margin:8px 0 0">${d.skipped_items.map(esc).join('\n')}</pre></details>`;
+  }
+  if(d.errors&&d.errors.length){
+    html+=`<div class="card" style="margin-top:12px;border-left:4px solid #ef4444"><h3>❌ 失败（${d.errors.length}）</h3><pre style="white-space:pre-wrap;font-size:11px;max-height:200px;overflow:auto;background:#1b1e2b;padding:10px;border-radius:6px;margin:0">${d.errors.map(esc).join('\n')}</pre></div>`;
+  }
+  v.innerHTML=html;
+}
+
+async function subSyncRun(btn){
+  btn.disabled=true; btn.textContent='⏳ 启动中…';
+  const d=await apiPost('/api/mt/subsync/run',{});
+  toast(d.ok?('✅ '+d.msg):('⚠️ '+(d.msg||'失败')), d.ok?'ok':'err');
+  if(d.ok){ setTimeout(renderSubSync,1200); const t=setInterval(async()=>{ const s=await apiGet('/api/mt/subsync'); if(!s.running){ clearInterval(t); renderSubSync(); } },5000); }
+  else { btn.disabled=false; btn.textContent='🔍 立即扫描'; }
+}
+
+async function subSyncAuto(on){
+  const d=await apiPost('/api/mt/subsync/auto',{on:on?1:0});
+  toast(d.ok?('✅ '+d.msg):('⚠️ '+(d.msg||'失败')), d.ok?'ok':'err');
 }
 
 
@@ -35000,10 +35215,53 @@ async function renderKeepalive(){
 
   kaCookieRefresh();
 
+  // ★★ 2026-11-06 MP 站点数据卡（用户要求：每站上传/下载/分享率/魔力/等级/做种）
+  v.insertAdjacentHTML('afterbegin','<div class="card" id="ka_sites"><h3>📊 站点数据 · MP 直连 <span class="tag">上传 / 下载 / 分享率 / 魔力 / 等级 / 做种</span></h3><div id="ka_sites_body"><div class="empty"><span class="spin"></span> 读取各站数据…</div></div></div>');
+
+  kaSitesLoad();
+
   if(KA_TIMER)clearInterval(KA_TIMER);
 
   KA_TIMER=setInterval(async()=>{ if(CUR==='keepalive'){const d2=await apiGet('/api/keepalive',0); if(d2&&d2.ok)kaSeedRender(d2);} },8000);
 
+}
+
+// ★ MP 每站保号数据（/api/ka/sites，4 路并发抓 userdata，按上传量降序）
+async function kaSitesLoad(){
+  const body=document.getElementById('ka_sites_body'); if(!body)return;
+  try{
+    const d=await apiGet('/api/ka/sites',0);
+    if(!d||!d.ok){body.innerHTML='<div class="sub">'+esc((d&&d.msg)||'读取失败')+'</div>';return;}
+    const gb=v=>v>=1073741824?(v/1073741824).toFixed(2)+' GB':(v/1048576).toFixed(0)+' MB';
+    const rows=(d.rows||[]).map(r=>{
+      const ratio=(r.ratio!=null&&r.ratio!==0)?r.ratio:null;
+      const rCol=ratio==null?'var(--muted)':(ratio<1?'#f87171':(ratio>=4?'#4ade80':'#fbbf24'));
+      const days=r.join_at?Math.max(1,Math.round((Date.now()-new Date(r.join_at.replace(' ','T')))/864e5)):null;
+      return '<div class="ka-scard">'
+        +'<div class="ks-hd"><img class="ks-ic" src="https://favicon.im/'+esc(r.domain||'')+'?larger=true" loading="lazy" '
+        +'onerror="this.style.visibility=\'hidden\'"><div class="ks-nm"><b>'+esc(r.name||'')+'</b>'
+        +'<span class="ks-dom">'+esc(r.domain||'')+'</span></div>'
+        +(r.level?'<span class="ks-lv">'+esc(r.level)+'</span>':'')+'</div>'
+        +'<div class="ks-rows">'
+        +'<div class="ks-kv"><span>⬆ 上传</span><b class="ks-up">'+(r.upload?gb(r.upload):'—')+'</b></div>'
+        +'<div class="ks-kv"><span>⬇ 下载</span><b>'+(r.download?gb(r.download):'—')+'</b></div>'
+        +'<div class="ks-kv"><span>🛡 分享率</span><b style="color:'+rCol+'">'+(ratio!=null?ratio:'—')+'</b></div>'
+        +'<div class="ks-kv"><span>🪙 魔力</span><b>'+(r.bonus!=null?Number(r.bonus).toLocaleString('en-US',{maximumFractionDigits:0}):'—')+'</b></div>'
+        +'<div class="ks-kv"><span>🌱 做种</span><b>'+(r.seeding||0)+' 个</b></div>'
+        +'<div class="ks-kv"><span>📦 做种量</span><b>'+(r.seeding_size?gb(r.seeding_size):'—')+'</b></div>'
+        +(r.user?'<div class="ks-kv"><span>👤</span><b>'+esc(r.user)+'</b></div>':'')
+        +(days?'<div class="ks-kv"><span>📅 加入</span><b>'+days+' 天</b></div>':'')
+        +(r.ok?'':'<div class="ks-kv"><span class="ks-err">❌ '+esc(r.err||'无数据')+'</span></div>')
+        +'</div>'
+        +(r.url?'<a class="ks-go" href="'+esc(r.url)+'" target="_blank" rel="noopener">打开站点 →</a>':'')
+        +'</div>';
+    }).join('');
+    const tot=d.total_ratio?('<span style="color:'+(d.total_ratio<1?'#f87171':'#4ade80')+'">'+d.total_ratio+'</span>'):'—';
+    body.innerHTML='<div class="sub" style="margin-bottom:7px">共 '+d.n+' 站 · 总上传 '+(d.total_up?(d.total_up/1073741824).toFixed(1)+' GB':'—')
+      +' · 总下载 '+(d.total_dn?(d.total_dn/1073741824).toFixed(1)+' GB':'—')+' · 总分享率 '+tot
+      +' · <span style="color:var(--muted)">分享率 <b style="color:#f87171">&lt;1 红</b> / ≥1 黄 / <b style="color:#4ade80">≥4 绿</b></span></div>'
+      +'<div class="ka-sgrid">'+rows+'</div>';
+  }catch(e){body.innerHTML='<div class="sub">读取失败：'+esc(String(e).slice(0,50))+'</div>';}
 }
 
 function kaSeedRender(d){
@@ -35770,7 +36028,7 @@ async function ccApply(target,btn){
 
 let DB_ROWS=[], DB_Q='', DB_SRC='';
 
-let OWNER_TG = 0;  // 群主 TG 数字 UID：由设置页 tg_owner 注入（后端无限 V积分+灵石），0=未配置
+const OWNER_TG = {{MH_OWNER_TG}};  // 群主 TG（KFC 影音 OWNER，后端无限 V积分+灵石）
 
 let RT_SNAP_LAST=null;
 
@@ -35787,7 +36045,6 @@ async function renderDB(){
   if(!d||!d.ok){v.innerHTML='<div class="card"><h3>⚠️ 加载失败</h3><div class="hint">'+esc((d&&d.msg)||'')+'</div></div>';return;}
 
   DB_ROWS=d.rows||[];
-  if(d.tg_owner) OWNER_TG=d.tg_owner;  // 群主 UID 由后端注入（未配置则保持 0）
 
   const now=Date.now()/1000;
 
@@ -36107,7 +36364,98 @@ async function rtPush(btn){
 
 // ═══════════ 🤖 机器人联动中心（boss/game/RT 状态 + RT 线路/配置）═══════════
 
+
+// ══════════ ★★ 2026-11-06 商业化同步中心 ══════════
+// 每容器一张绑定卡（绑定方式说明+立即同步）+ 总「全部同步」+ MT 槽位绑定展示
+// + 槽位注册表（JSON 编辑保存）。别人机器部署后：点同步 → 生成自己的数据画像。
+const SYNC_BINDS=[
+ {k:'mt',ic:'🧹',nm:'MediaTidy（整理/洗版规则）',
+  how:'同宿主：面板经 Docker 共享卷直读 MT 的 SQLite（scheduled_jobs），零凭据、无需 API token',
+  what:'整理方案清单（含洗版开关/画质规则引用/分类规则数）→ 生成洗版槽位画像'},
+ {k:'emby',ic:'📺',nm:'Emby ×2（KFC / KFC2）',
+  how:'HTTP API + api_key（设置页可改 emby_key / emby_key2，端口随容器注册表走）',
+  what:'双库统计（电影/剧集/集数/用户数/播放中）→ 槽位对照的「库内资源」来源'},
+ {k:'qb',ic:'⬇️',nm:'qBittorrent（下载/做种）',
+  how:'HTTP API（设置页 qb_url/账号）',
+  what:'下载/做种计数快照 → 面板展示与联动'},
+ {k:'mp',ic:'🎬',nm:'MoviePilot（站点/刷流）',
+  how:'HTTP API + MP token（设置页）',
+  what:'站点/刷流任务计数快照'},
+];
+let SYNC_T=null;
+async function renderSync(){
+  const v=document.getElementById('view');
+  if(SYNC_T){clearInterval(SYNC_T);SYNC_T=null;}
+  v.innerHTML='<div class="card"><h3>🔄 同步中心 <span class="tag">商业化绑定 · 每台机器生成自己的数据画像</span></h3>'
+    +'<div class="hint">别人部署面板后，在这里把<b>他自己的</b> MT / Emby / qB / MoviePilot 绑定进来：'
+    +'同宿主=共享卷直读（MT 无需 token）；远程=HTTP API + key（设置页填）。'
+    +'点「立即同步」把该容器的规则/统计拉成本机缓存（<code>/data/sync_state.json</code>），'
+    +'洗版槽位对照、排名榜、做种统计全部按<b>他自己的数据</b>工作。</div>'
+    +'<div class="row" style="gap:8px;margin:10px 0;flex-wrap:wrap">'
+    +'<button class="btn acc" onclick="syncRun(\'all\',this)">🔄 全部同步</button>'
+    +'<span class="sub" id="sync_last">读取中…</span></div>'
+    +'<div id="sync_cards"></div>'
+    +'<div class="card" style="margin-top:12px"><h4>🧩 洗版槽位注册表（可编辑）</h4>'
+    +'<div class="hint">槽位定义与 MT 画质规则同构（分辨率×来源×DV/HDR）。缺集对照/质量更优判断都按这份表；'
+    +'MT 的画质规则定义目前不对外暴露（无 API），同步时自动记录引用名，定义在这里编辑维护。</div>'
+    +'<textarea id="slot_ta" style="width:100%;min-height:180px;font-family:ui-monospace,monospace;font-size:11.5px"></textarea>'
+    +'<div class="row" style="gap:6px;margin-top:8px"><button class="btn acc sm" onclick="slotSave()">💾 保存槽位表</button>'
+    +'<span class="sub" id="slot_msg"></span></div></div>';
+  await syncRefresh();
+  SYNC_T=setInterval(syncRefresh,30000);
+}
+async function syncRefresh(){
+  try{
+    const d=await apiGet('/api/sync/status',0);
+    const last=document.getElementById('sync_last');
+    if(last)last.textContent='上次同步：'+(d.synced_txt||'从未')+' · 槽位 '+(d.slot_profile&&d.slot_profile.slots?d.slot_profile.slots.length:0)+' 个'
+      +(d.slot_profile&&d.slot_profile.mt_quality_rule?(' · MT 槽位方案：'+d.slot_profile.mt_quality_rule):'');
+    const box=document.getElementById('sync_cards');
+    if(box){
+      box.innerHTML=SYNC_BINDS.map(b=>{
+        const it=(d.items&&d.items[b.k])||null;
+        const st=it?(it.ok?'<span class="tag on">✅ 已同步 '+esc((it.ts_txt||'').slice(5,16))+'</span>':'<span class="tag bad">❌ '+esc(it.err||'失败')+'</span>'):'<span class="tag">未同步</span>';
+        let sum='';
+        if(it&&it.ok){
+          if(b.k==='mt')sum='方案 '+it.plan_n+' 个 · 洗版引用 '+(it.quality_rules||[]).length+' 个：'+esc((it.quality_rules||[]).join('、')||'—');
+          else if(b.k==='emby')sum=(it.servers||[]).map(s=>esc(s.name)+' '+(s.movie==null?'—':s.movie)+'🎬/'+(s.series==null?'—':s.series)+'📺').join(' · ');
+          else if(b.k==='qb')sum='下载 '+(it.downloading==null?'—':it.downloading)+' · 做种 '+(it.seeding==null?'—':it.seeding);
+          else if(b.k==='mp')sum='站点 '+(typeof it.sites==='object'&&it.sites?(it.sites.active||it.sites.total):'—')+' · 刷流 '+(it.brushtask||0);
+        }
+        return '<div class="card" style="margin-top:8px"><div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">'
+          +'<b style="font-size:13.5px">'+b.ic+' '+esc(b.nm)+'</b>'+st
+          +'<span class="sp"></span>'
+          +'<button class="btn sm acc" onclick="syncRun(\''+b.k+'\',this)">🔄 立即同步</button></div>'
+          +'<div class="sub" style="margin-top:5px"><b>绑定方式：</b>'+esc(b.how)+'</div>'
+          +'<div class="sub"><b>同步内容：</b>'+esc(b.what)+'</div>'
+          +(sum?'<div class="sub" style="color:var(--acc)">'+sum+'</div>':'')
+          +'</div>';
+      }).join('');
+    }
+    const ta=document.getElementById('slot_ta');
+    if(ta&&!ta.value&&d.slot_profile)ta.value=JSON.stringify(d.slot_profile,null,2);
+  }catch(e){const l=document.getElementById('sync_last');if(l)l.textContent='读取失败：'+String(e).slice(0,40);}
+}
+async function syncRun(which,btn){
+  if(btn){btn.disabled=true;btn.innerHTML='<span class="spin"></span> 同步中…';}
+  try{
+    const d=await apiPost('/api/sync/run',{which:which});
+    toast(d&&d.ok?('同步完成（'+(d.took||0)+'s）'):'同步失败',d&&d.ok?'ok':'err');
+  }catch(e){toast('同步请求失败','err');}
+  if(btn){btn.disabled=false;btn.innerHTML=which==='all'?'🔄 全部同步':'🔄 立即同步';}
+  await syncRefresh();
+}
+async function slotSave(){
+  const ta=document.getElementById('slot_ta'),m=document.getElementById('slot_msg');
+  try{
+    const prof=JSON.parse(ta.value||'{}');
+    const d=await apiPost('/api/slots/save',{profile:prof});
+    if(m)m.textContent=d&&d.ok?'✅ 已保存，对照立即生效':'❌ '+(d.msg||'保存失败');
+    toast(m.textContent,d&&d.ok?'ok':'err');
+  }catch(e){if(m)m.textContent='❌ JSON 解析失败：'+String(e).slice(0,50);}
+}
 async function renderBotSync(){
+
 
   const v=document.getElementById('view');
 
@@ -37631,7 +37979,7 @@ async function renderSettings(){
 
       <div class="frm">
 
-        <div class="fld"><label><b>私发对象 UID</b>（群主 TG 数字 ID）</label><input id="tg_owner" data-sec="1" type="number" value="${esc(c.tg_owner||'')}"><span class="tip">找 @userinfobot 私聊可查自己的数字 ID</span></div>
+        <div class="fld"><label><b>私发对象 UID</b>（群主 TG 数字 ID）</label><input id="tg_owner" data-sec="1" type="number" value="${esc(c.tg_owner||'{{MH_OWNER_TG}}')}"><span class="tip">找 @userinfobot 私聊可查自己的数字 ID</span></div>
 
         <div class="fld"><label><b>TG Bot Token</b>（留空 = 复用 kfcgame 内置机器人）</label><input id="tg_token" data-sec="1" value="${esc(c.tg_token||'')}" placeholder="123456:ABC-DEF..."><span class="tip">找 @BotFather 创建机器人获取；填了就用这个发通知</span></div>
 
@@ -37845,7 +38193,7 @@ function ctregRender(){
 
         +'<div class="ctreg-row">'
 
-        +'<input id="ct_'+k+'_addr" value="'+esc(x.addr||'')+'" placeholder="NAS 地址，如 192.168.x.x" title="地址" style="flex:1.4;min-width:0">'
+        +'<input id="ct_'+k+'_addr" value="'+esc(x.addr||'')+'" placeholder="NAS 地址，如 192.168.1.x" title="地址" style="flex:1.4;min-width:0">'
 
         +'<input id="ct_'+k+'_port" value="'+(x.port?esc(String(x.port)):'')+'" placeholder="端口" title="端口（0=不提供 Web）" style="flex:.7;min-width:0">'
 
@@ -43535,13 +43883,16 @@ async function discDetail(tmdbid, mtype, el) {
 
   DISC.detail = null; DISC.tor = null; DISC.eps = new Set(); DISC.season = null;
 
+  DISC.libSlots = null; LIBSLOTS_PROM = null;   // ★ 换片重置槽位对照，防串数据
+
   // ★ v1.13：新片重算质量更优 / 清空筛选态（避免上一个片的筛选条件残留）
 
   DISC.betterTried = false; DISC.betterBusy = false;
 
   DISC.f = {}; DISC.qF = ''; DISC.freeOnly = false; DISC.betterOnly = false;
 
-  DISC.sort = 'seeders';
+  DISC.sort = 'size';
+  try{const _s=localStorage.getItem('disc_sort');if(_s&&DISC_SORTS.some(x=>x[0]===_s))DISC.sort=_s;}catch(e){}
 
   DISC.prewarmRows = null; DISC.prewarmN = -1;
 
@@ -43581,75 +43932,87 @@ async function discDetail(tmdbid, mtype, el) {
 
     discRenderDetail(d);
 
+    // ★ 2026-11-06 预加载提速：详情打开后若该片还没有预搜缓存，
+    //   立即触发后台单片预热（下次打开 0 秒出资源，不用再等实时搜索）
+    try{
+      const _t=(j.name||j.title||'');
+      if(_t && !(DISC.prewarmRows && DISC.prewarmRows.length)){
+        fetch('/api/discover/prewarm_one',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({title:_t})}).catch(()=>{});
+      }
+    }catch(e){}
+
     // 顺手把这个片的库状态写进分区缓存，下次网格直接用
 
     if (j.lib) DISC.lib[j.tmdbid] = j.lib;
 
     discRenderGrid();
 
-    // ★ v1.13：拿到真实片名后，再向后端要一次「预搜索」缓存行。
+    // ★★ 2026-11-06 修复「预加载了还要重新搜」的时序 bug：原实现 prewarm 查询
 
-    //   命中 → 立即合并渲染（0 秒见资源）；没命中 → 走原有实时搜索，体验不变。
+    //   是异步 fetch，主流程不等它就先跑 discLoadTor() 实时搜索 → 缓存永远
 
-    fetch('/api/discover/prewarm?title=' + encodeURIComponent(j.title || ''))
+    //   赶不上。现在【先 await 预搜缓存】：命中 → 直接渲染并 return（绝不
 
-      .then(r=>r.json()).then(d2=>{
+    //   打实时搜索）；未命中 → 才实时搜 + 后台单片预热供下次秒开。
 
-        if (!d2 || !d2.ok) return;
+    let _prHit = false;
 
-        DISC.prewarmN = d2.n || 0;
+    try{
 
-        if (d2.rows && d2.rows.length){
+      const _pr = await fetch('/api/discover/prewarm?title=' + encodeURIComponent(j.title || ''))
 
-          DISC.prewarmRows = d2.rows;
+        .then(r=>r.json()).catch(()=>null);
 
-          if (Array.isArray(DISC.tor) && DISC.tor.length < 3){
+      DISC.prewarmN = (_pr && _pr.n) || 0;
 
-            discMergePrewarm();
+      if (_pr && _pr.rows && _pr.rows.length){
 
-            discRenderTor();
+        DISC.prewarmRows = _pr.rows;
 
-            discLoadBetter();
+        DISC.tor = DISC.prewarmRows.map(p => Object.assign({}, p, {
 
-          }
+          site_show: p.site_name || p.site || '', site_sym: (p.site_logo || {}).sym || '📡',
 
-        }
+          raw_torrent: p.url ? 1 : 0, from_prewarm: true,
 
-      }).catch(()=>{});
+          dl_dom: (p.site_logo || {}).domain || p.domain || '',
 
-    // ★ v1.18 BUG-132：预搜缓存已命中 → 直接用缓存渲染，不再打实时搜索。
+          dl_tid: p.torrent_id || '',
 
-    //   用户原话：「提前给我搜好，每隔5分钟更新一次资源，然后我打开能直达的，
+          dl_sid: p.site_id || '',
 
-    //   而不是在线搜索」。预搜是后台每 5 分钟全量跑的，命中即代表数据够新。
+        }));
 
-    //   「🔄 刷新资源」按钮仍在（用户要最新时手动点，走 pt_direct_search）。
+        DISC.torSrc = 'prewarm';
 
-    if (DISC.prewarmRows && DISC.prewarmRows.length){
+        DISC.torck = new Set();
 
-      DISC.tor = DISC.prewarmRows.map(p => Object.assign({}, p, {
+        DISC.torLoading = false;
 
-        site_show: p.site_name || p.site || '', site_sym: (p.site_logo || {}).sym || '📡',
+        _prHit = true;
 
-        raw_torrent: p.url ? 1 : 0, from_prewarm: true,
+      } else if (_pr){
 
-        dl_dom: (p.site_logo || {}).domain || p.domain || '',
+        // 缓存确实没这部 → 后台单片预热，下次打开秒出
 
-        dl_tid: p.torrent_id || '',
+        fetch('/api/discover/prewarm_one',{method:'POST',headers:{'Content-Type':'application/json'},
 
-        dl_sid: p.site_id || '',
+          body:JSON.stringify({title:j.title||''})}).catch(()=>{});
 
-      }));
+      }
 
-      DISC.torSrc = 'prewarm';
+    }catch(e){}
 
-      DISC.torck = new Set();
+    if (_prHit){
+
+      if (typeof discPrewarmHint === 'function') discPrewarmHint();
 
       discRenderTor();
 
       discLoadBetter();
 
-      DISC.torLoading = false;
+      discLoadLibSlots();
 
       return;
 
@@ -45177,7 +45540,32 @@ async function discRefreshTor() {
 
   } catch (e) {
 
-    if (box) box.innerHTML = `<div class="empty">刷新失败：${esc(String(e).slice(0,60))}</div>`;
+    // ★ 2026-11-06 加载失败自动回退：预加载缓存有货就直接用缓存渲染（不白屏）
+    if (DISC.prewarmRows && DISC.prewarmRows.length){
+
+      DISC.tor = DISC.prewarmRows.map(p => Object.assign({}, p, {
+
+        site_show: p.site_name || p.site || '', site_sym: (p.site_logo || {}).sym || '📡',
+
+        raw_torrent: p.url ? 1 : 0, from_prewarm: true,
+
+        dl_dom: (p.site_logo || {}).domain || p.domain || '',
+
+        dl_tid: p.torrent_id || '', dl_sid: p.site_id || '',
+
+      }));
+
+      DISC.torSrc = 'prewarm'; DISC.torck = new Set(); DISC.torLoading = false;
+
+      discRenderTor(); discLoadBetter(); discLoadLibSlots();
+
+      toast('实时检索失败（' + esc(String(e).slice(0,40)) + '），已回退预加载缓存', 'warn', 3200);
+
+      return;
+
+    }
+
+    if (box) box.innerHTML = `<div class="empty">刷新失败：${esc(String(e).slice(0,60))}<div class="sub" style="margin-top:6px"><button class="btn sm" onclick="discLoadTor()">🔄 重试</button></div></div>`;
 
   }
 
@@ -45703,7 +46091,8 @@ function discFilterReset(){
 
   DISC.f = {}; DISC.qF = ''; DISC.freeOnly = false; DISC.betterOnly = false;
 
-  DISC.sort = 'seeders';
+  DISC.sort = 'size';
+  try{const _s=localStorage.getItem('disc_sort');if(_s&&DISC_SORTS.some(x=>x[0]===_s))DISC.sort=_s;}catch(e){}
 
   discRenderTor();
 
@@ -45799,17 +46188,42 @@ function discRenderTor() {
 
   const betterN = rows.filter(x=>x.better).length;
 
+  // ★ 2026-11-06 槽位对照：第一次渲染时自动拉库内版本（命中/实时两条路都走这里）
+  if (DISC.detail && DISC.detail.tmdbid && !DISC.libSlots && !LIBSLOTS_PROM){
+    discLoadLibSlots();
+  }
+  const _LS = DISC.libSlots;
+
+  // ★ 2026-11-06 行级槽位状态（绿=更优 红=缺失 灰=不在槽位体系）+ 绿行顶部大标签
+  const _stOf = (x)=>_slotState(x,_LS);
+  const _greenN = rows.filter(x=>_stOf(x).green).length;
+  const _redN = rows.filter(x=>_stOf(x).red).length;
+
+  // ★ 2026-11-06 顶部快捷排序条（默认体积降序；点选即生效并记住选择）
+  const _curSort = DISC.sort || 'size';
+  try{localStorage.setItem('disc_sort',_curSort);}catch(e){}
+  const _sortChips=[['size','📦 体积'],['seeders','🌱 种子'],['bitrate','⚡ 码率'],['quality','🎯 画质'],['time','🕐 最新'],['better','⭐ 更优']]
+    .map(c=>'<button class="btn sm'+(_curSort===c[0]?' acc':'')+'" onclick="discSetSort(\''+c[0]+'\')">'+c[1]+'</button>').join('');
+  const _sortBar='<div class="row" style="gap:6px;flex-wrap:wrap;margin:0 0 7px;align-items:center">'
+    +'<span class="sub" style="font-size:11px">排序</span>'+_sortChips+'</div>';
+
   box.innerHTML = discFilterPanel(rows)
+
+    + _sortBar
 
     + `<div class="sub" style="margin-bottom:7px">共 <b>${rows.length}</b> 条${
 
-        betterN ? ` · <span style="color:#4ade80;font-weight:700">⭐ ${betterN} 条质量更优</span>` : ''
+        _greenN ? ` · <span style="color:#4ade80;font-weight:700">⭐ ${_greenN} 条画质更优</span>` : ''
+      }${
 
+        _redN ? ` · <span style="color:#f87171;font-weight:700">❌ ${_redN} 条库内缺失</span>` : ''
       } · 勾选后可批量下载 · 体积更大即判为「质量更优」</div>
 
     <div class="dsc-tor">${rows.map((x, i) => `
 
-      <div class="tr ${x.better ? 'better' : ''}">
+      <div class="tr ${x.better ? 'better' : ''}${(_LS&&_slotBetter(x,_LS))?' slot-better':''}${(_LS&&_stOf(x).cls)?' '+_stOf(x).cls:''}">
+
+        ${(_LS&&_stOf(x).green)?'<div class="slot-banner">⭐ 画质更优 · 值得洗版</div>':''}
 
         <input type="checkbox" class="disc-torck" value="${esc(x.torrent_id != null ? String(x.torrent_id) : (x.url || String(i)))}"
 
@@ -45819,7 +46233,7 @@ function discRenderTor() {
 
         <div>
 
-          <div class="tr-po">${x.poster ? `<img src="${esc(x.poster)}" alt="" loading="lazy" onerror="this.parentNode.innerHTML='<span class=\'tr-po-fb\'>'+(esc(x.title||'?')).slice(0,1)+'</span>'">` : `<span class="tr-po-fb">${esc((x.title||'?').slice(0,1))}</span>`}</div>
+          <div class="tr-po">${(x.poster || (DISC.detail && DISC.detail.poster)) ? `<img src="${esc(x.poster || (DISC.detail && DISC.detail.poster))}" alt="" loading="lazy" onerror="this.parentNode.innerHTML='<span class=\'tr-po-fb\'>'+(esc(x.title||'?')).slice(0,1)+'</span>'">` : `<span class="tr-po-fb">${esc((x.title||'?').slice(0,1))}</span>`}</div>
 
           <div class="nm">${x.better ? `<span class="qtag-better" title="${esc(x.better_why||'')}">⭐ 质量更优</span> ` : ''}${esc(x.title || '')}</div>
 
@@ -45874,6 +46288,8 @@ function discRenderTor() {
           ${x.url ? `<a class="btn sm" href="${esc(x.url)}" target="_blank" rel="noopener" title="打开种子详情页">🔗</a>` : ''}
 
         </div>
+
+        ${slotHtml(x,_LS)}
 
       </div>`).join('')}</div>
 
@@ -45965,6 +46381,90 @@ function discDlBetter(btn) {
 
    后端与 Emby 逐集/整季按体积对比，返回每行 better + better_why。*/
 
+// ★★ 2026-11-06 洗版槽位对照：拉该片在 KFC/KFC2 库内的版本 → 按 PT 行槽位对照显示
+function slotClassify(pix, src, vcodec, hdr){
+  const P=String(pix||'').toUpperCase(),S=String(src||'').toUpperCase(),
+        H=String(hdr||'').toUpperCase();
+  const dv=H.indexOf('DV')>=0||H.indexOf('DOLBY')>=0;
+  const hdr10=H.indexOf('HDR10')>=0||H.indexOf('HLG')>=0||(!!H&&!dv);
+  if(P.indexOf('2160')>=0||P==='4K'||P.indexOf('3840')>=0){
+    let b=(S.indexOf('REMUX')>=0)?'2160p REMUX':((S.indexOf('WEB')>=0)?'2160p WEB-DL':'2160p 压制');
+    if(dv)b+=' DV'; else if(hdr10)b+=' HDR';
+    return b;
+  }
+  if(P.indexOf('1080')>=0){
+    if(S.indexOf('REMUX')>=0)return '1080p REMUX';
+    if(S.indexOf('WEB')>=0)return '1080p WEB-DL';
+    return '1080p 压制';
+  }
+  if(P.indexOf('720')>=0)return '720p';
+  return '其他';
+}
+const SLOT_ORDER=['2160p REMUX','2160p WEB-DL DV','2160p WEB-DL HDR','2160p 压制',
+  '1080p REMUX','1080p WEB-DL','1080p 压制','720p','其他'];
+function slotRank(k){const i=SLOT_ORDER.indexOf(k);return i<0?SLOT_ORDER.length:i;}
+// ★ 2026-11-06 快捷排序切换（默认体积）
+function discSetSort(k){
+  DISC.sort=k;
+  try{localStorage.setItem('disc_sort',k);}catch(e){}
+  discRenderTor();
+}
+
+function ptSlotOf(x){
+  const d=x.dims||{};
+  return slotClassify(d.pix||x.pix||'', d.src||'', d.vcodec||'', d.hdr||(d.dv_profile?('DV'+d.dv_profile):''));
+}
+let LIBSLOTS_PROM=null;
+function discLoadLibSlots(){
+  if(!DISC.detail||!DISC.detail.tmdbid)return Promise.resolve();
+  if(LIBSLOTS_PROM)return LIBSLOTS_PROM;
+  LIBSLOTS_PROM=apiGet('/api/discover/libslots?tmdbid='+encodeURIComponent(DISC.detail.tmdbid)
+    +'&type='+encodeURIComponent(DISC.detail.type||'movie'),0)
+    .then(d=>{ DISC.libSlots=(d&&d.ok)?d:null; discRenderTor(); })
+    .catch(()=>{ DISC.libSlots=null; });
+  return LIBSLOTS_PROM;
+}
+// PT 行的槽位优于库内最高槽位 → 突出显示（绿框 + ⭐）
+// PT 行槽位状态判定（★ 2026-11-06 颜色语义按用户要求重定）：
+//   PT 槽位不在注册表 → grey（不在你的洗版体系，不突出）
+//   库内无该槽位      → red  （缺失，红）
+//   画质优于库内最高   → green（更优，绿）+ 行顶大标签
+function _slotState(x,LS){
+  if(!LS||!LS.slots)return {cls:'',label:''};
+  const k=ptSlotOf(x);
+  const inProfile=!(LS.slot_keys&&LS.slot_keys.length)||LS.slot_keys.indexOf(k)>=0;
+  if(!inProfile)return {cls:'slot-grey',label:'',grey:true};
+  const has=!!LS.slots[k];
+  const better=slotRank(k)<(LS.highest_rank!=null?LS.highest_rank:99);
+  if(has&&better)return {cls:'slot-green',label:'⭐ 画质更优 · 值得洗版（'+k+' 优于库内最高 '+LS.highest_slot+'）',green:true};
+  if(!has)return {cls:'slot-red',label:'❌ 库内缺失该槽位（'+k+'）— 下载即补齐',red:true};
+  return {cls:'',label:''};
+}
+function _slotBetter(x,LS){ return _slotState(x,LS).green; }
+// PT 行下方的「我的库 · 槽位对照」区块
+function slotHtml(x,LS){
+  if(!LS||!LS.slots)return '';
+  const k=ptSlotOf(x);
+  const st=_slotState(x,LS);
+  const hit=LS.slots[k];
+  const vr=(hit&&hit.versions)||[];
+  const best=LS.highest_slot?('库内最高：'+esc(LS.highest_slot)):'库内暂无任何版本';
+  const head='<div class="libslot-hd"><span class="ls-tag">'+esc(k)+'</span>'
+    +'<span class="ls-n">'+(vr.length?('我的库 '+vr.length+' 个版本'):'<b style="color:#f87171">EMBY 库暂无该槽位资源</b>')+'</span>'
+    +'<span class="ls-best">'+best+'</span></div>';
+  const rows=vr.map(v=>
+    '<div class="ls-v"><span class="ls-srv '+(v.server==='KFC2'?'k2':'')+'">'+esc(v.server||'KFC')+'</span>'
+    +'<b>'+esc(v.size_txt||'—')+'</b>'
+    +'<span>'+esc([v.pix,v.codec].filter(Boolean).join(' '))+'</span>'
+    +'<span class="ls-hdr">'+esc(v.hdr||'SDR')+'</span>'
+    +(v.bitdepth?'<span class="ls-bd">'+esc(v.bitdepth)+'</span>':'')
+    +(v.fps?'<span>'+esc(v.fps)+'</span>':'')
+    +(v.bitrate_mbps?'<span>⚡'+v.bitrate_mbps+'Mbps</span>':'')
+    +(v.audio?'<span class="ls-au">'+esc(v.audio)+'</span>':'')+'</div>'
+    +(v.file?'<div class="ls-file" title="'+esc(v.file)+'">📄 '+esc(v.file)+'</div>':'')).join('');
+  const win=(st.green?'<div class="ls-win">⭐ 画质优于库内最高（'+esc(k)+' vs '+esc(LS.highest_slot||'无')+'）— 值得洗版</div>':'');
+  return '<div class="libslot '+st.cls+'">'+head+(rows||'<div class="ls-none">该槽位在 KFC / KFC2 库内均无资源</div>')+win+'</div>';
+}
 async function discLoadBetter() {
 
   const j = DISC.detail;
@@ -49531,6 +50031,92 @@ function ovmFirstHint(){
 
 .dsc-tor .tr .mm-toggle{font-size:10px;color:var(--acc);cursor:pointer;user-select:none;flex:none}
 
+/* ★★ 2026-11-06 槽位对照 v3：绿=画质更优（大标签+光晕）红=库内缺失 灰=不在槽位体系 */
+.dsc-tor .tr{position:relative}
+.dsc-tor .tr.slot-better{border:1px solid rgba(34,197,94,.55);
+  background:linear-gradient(100deg,rgba(34,197,94,.14),rgba(34,197,94,.05) 55%,rgba(34,197,94,.02));
+  box-shadow:0 0 0 1px rgba(34,197,94,.18),0 0 18px -4px rgba(34,197,94,.55),
+             inset 0 0 24px -14px rgba(34,197,94,.7)}
+.dsc-tor .tr.slot-better .nm{color:#d9ffe6}
+.dsc-tor .tr.slot-better .nm .qtag-better{text-shadow:0 0 8px rgba(34,197,94,.8)}
+.dsc-tor .tr.slot-red{border:1px solid rgba(248,113,113,.42);
+  background:linear-gradient(100deg,rgba(248,113,113,.08),rgba(248,113,113,.02) 55%)}
+.dsc-tor .tr.slot-grey{opacity:.62}
+.slot-banner{grid-column:1/-1;margin:0 0 4px;display:inline-flex;align-self:flex-start;
+  align-items:center;gap:6px;font-size:11px;font-weight:800;color:#052e12;
+  background:linear-gradient(90deg,#4ade80,#22c55e);border-radius:8px;padding:3px 10px;
+  box-shadow:0 0 14px -3px rgba(34,197,94,.8);letter-spacing:.3px}
+.libslot{grid-column:1/-1;margin:2px 0 2px 24px;border:1px dashed color-mix(in srgb,var(--hue-a) 32%,transparent);
+  border-radius:8px;padding:7px 10px;background:rgba(255,255,255,.03);font-size:10.5px}
+.libslot.slot-red{border-color:rgba(248,113,113,.4)}
+.libslot.slot-green{border-color:rgba(34,197,94,.5)}
+.libslot-hd{display:flex;align-items:center;gap:6px;flex-wrap:wrap;color:var(--sub)}
+.libslot-hd .ls-tag{font-weight:800;color:var(--acc);background:color-mix(in srgb,var(--hue-a) 14%,transparent);
+  padding:1px 7px;border-radius:99px;white-space:nowrap}
+.libslot-hd .ls-n{white-space:nowrap}
+.libslot-hd .ls-best{margin-left:auto;color:var(--muted);font-size:10px;white-space:nowrap}
+.ls-file{margin-top:4px;color:var(--muted);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ★★ 2026-11-06 保号页 MP 站点数据卡（图标/上传/下载/分享率/魔力/等级/做种） */
+.ka-sgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}
+.ka-scard{border:1px solid var(--line);border-radius:11px;padding:9px 10px;background:rgba(255,255,255,.03)}
+.ka-scard .ks-hd{display:flex;align-items:center;gap:8px;min-width:0}
+.ka-scard .ks-ic{width:26px;height:26px;border-radius:7px;object-fit:contain;background:var(--bg2);flex:none}
+.ka-scard .ks-nm{min-width:0;display:flex;flex-direction:column}
+.ka-scard .ks-nm b{font-size:12.5px;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ka-scard .ks-dom{font-size:9.5px;color:var(--muted)}
+.ka-scard .ks-lv{margin-left:auto;flex:none;font-size:9.5px;font-weight:700;color:var(--acc);
+  border:1px solid color-mix(in srgb,var(--acc) 40%,transparent);border-radius:99px;padding:1px 7px}
+.ka-scard .ks-rows{display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;margin-top:7px}
+.ka-scard .ks-kv{display:flex;justify-content:space-between;gap:6px;font-size:10.5px;color:var(--sub)}
+.ka-scard .ks-kv b{font-variant-numeric:tabular-nums;color:var(--txt);font-weight:700;white-space:nowrap}
+.ka-scard .ks-up{color:#4ade80}
+.ka-scard .ks-err{color:#f87171}
+.ka-scard .ks-go{display:inline-block;margin-top:6px;font-size:10px;color:var(--acc)}
+
+/* ★★ 2026-11-06 手机端专项：防遮盖/防溢出（窄屏下对照头换行、按钮列竖排收紧） */
+@media(max-width:640px){
+  .libslot{margin-left:2px;padding:6px 8px}
+  .libslot-hd .ls-best{margin-left:0;flex-basis:100%;white-space:normal}
+  .ls-v{gap:5px;font-size:10px}
+  .ls-v .ls-au{max-width:100%}
+  .dsc-tor .tr>.aa{flex-direction:column;align-items:stretch;gap:4px}
+  .dsc-tor .tr>.aa .btn{width:100%;justify-content:center;text-align:center}
+  .dsc-tor .tr .nm{font-size:12.5px;overflow-wrap:anywhere}
+  .slot-banner{font-size:10px;padding:2px 8px}
+  #ov_sess_filter .btn{padding:4px 9px}
+}
+
+/* ★★ 2026-11-06 手机端通用优化（用户：「很多页面对手机不友好」）——保守全局补丁 */
+@media(max-width:640px){
+  #view{padding:10px 10px 90px}
+  .card{padding:12px 11px;border-radius:12px}
+  .card h3{font-size:14.5px;flex-wrap:wrap}
+  .card h4{font-size:13px}
+  .card .hint{font-size:11px;line-height:1.55}
+  .row{gap:6px}
+  .kv{grid-template-columns:1fr;gap:3px}
+  .grid.g2,.grid.g3,.grid.g4{grid-template-columns:1fr 1fr}
+  .stat-row{grid-template-columns:1fr 1fr}
+  table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  table th,table td{white-space:nowrap}
+  .qs-grid{grid-template-columns:1fr 1fr}
+  .btn{padding:6px 11px;font-size:12px}
+  .ovss-rich{padding:10px}
+  .rnk-row{gap:7px;padding:5px 9px}
+  .rnk-meta{max-width:100%}
+  #ka_sites .ks-rows{grid-template-columns:1fr 1fr}
+}
+.ls-v{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px;color:var(--sub)}
+.ls-v b{color:var(--txt);font-variant-numeric:tabular-nums}
+.ls-v .ls-srv{font-weight:800;color:#7dd3fc;background:rgba(56,189,248,.12);
+  padding:0 6px;border-radius:99px;font-size:9.5px}
+.ls-v .ls-srv.k2{color:#f9a8d4;background:rgba(236,72,153,.14)}
+.ls-v .ls-hdr{color:#c084fc;font-weight:700}
+.ls-v .ls-au{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ls-none{margin-top:4px;color:var(--muted)}
+.ls-win{margin-top:5px;color:#4ade80;font-weight:700}
+
 @media (max-width:768px){
 
   #view.ovm-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
@@ -49577,7 +50163,7 @@ async function renderKgMdc(){
 
      '<button class="btn '+(KG.mdcSub===s[0]?'acc':'')+'" onclick="KG.mdcSub=\''+s[0]+'\';renderKgMdc()">'+s[1]+'</button>').join('')
 
-   +'<span class="sp"></span><a class="btn sm" href="http://'+location.hostname+':9208" target="_blank">打开 MDC 原生 UI ↗</a>'
+   +'<span class="sp"></span><a class="btn sm" href="http://{{MH_NAS_IP}}:9208" target="_blank">打开 MDC 原生 UI ↗</a>'
 
    +'</div></div><div id="kgb"><div class="empty"><span class="spin"></span> 加载中…</div></div>';
 
@@ -50313,7 +50899,7 @@ async function renderKgAvdb(){
 
    +'<span class="tag" style="color:'+(ok?'var(--ok)':'var(--bad)')+';font-weight:700">'+(ok?'● 在线':'● 离线/异常 ')+''+(ok?'':'('+esc(st)+')')+'</span>'
 
-   +'<a class="btn acc" href="http://'+location.hostname+':8000" target="_blank">打开 AVDB ↗</a>'
+   +'<a class="btn acc" href="http://{{MH_NAS_IP}}:8000" target="_blank">打开 AVDB ↗</a>'
 
    +'<button class="btn" onclick="kgSvcAct(\'avdb\',\'restart\')">🔁 重启</button>'
 
