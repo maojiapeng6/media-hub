@@ -23102,6 +23102,7 @@ Q2F_DEFAULT_SETTINGS = {
     'mt_after': False,       # 全部完成后自动创建 MT 任务组
     'notify': True,          # 完成后 TG 播报
     'keep_days': 30,         # 记录保留天数
+    'delete_after': True,    # ★ 转换成功投递 115 后，自动删除夸克中转源文件
     'src': Q2F_SRC, 'dst': Q2F_DST, 'cd2': Q2F_CD2, 'mt': Q2F_MT_SRC,
 }
 
@@ -23132,6 +23133,29 @@ def q2f_api(method, path, body=None, t=25):
             return json.loads(r.read().decode('utf-8', 'replace'))
     except Exception as e:
         return {'code': 0, 'message': str(e)[:150]}
+
+
+def _q2f_del_after(s):
+    """是否转换成功后删除夸克源文件（默认开启，可设置关闭）。"""
+    try:
+        return bool((s.get('settings') or {}).get('delete_after', True))
+    except Exception:
+        return True
+
+
+def q2f_delete_source(rel):
+    """删除夸克中转源文件（OpenList QuarkOpen 挂载路径）。
+    仅在转换成功投递 115/CD2 后调用；删除失败仅记录，不影响已完成状态。"""
+    try:
+        full = (Q2F_SRC.rstrip('/') + '/' + rel.lstrip('/'))
+        d = os.path.dirname(full)
+        nm = os.path.basename(full)
+        r = q2f_api('POST', '/api/fs/remove', {'dir': d, 'names': [nm]}, t=25)
+        if r.get('code') == 200:
+            return True, '已删夸克源 ✓'
+        return False, '删夸克源失败: ' + str(r.get('message'))[:80]
+    except Exception as e:
+        return False, '删夸克源异常: ' + str(e)[:80]
 
 
 def q2f_state():
@@ -23217,7 +23241,7 @@ def _q2f_new_item(f, manual=False, priority=0, force=False):
             'speed': 0, 'eta': 0, 'priority': priority, 'force': bool(force),
             'retry': 0, 'manual': manual, 'rapid': False,
             'queued_ts': time.time(), 'ts': time.time(), 'started': 0,
-            'finished': 0, 'duration': 0, 'msg': ''}
+            'finished': 0, 'duration': 0, 'began_at': '', 'msg': ''}
 
 
 def q2f_enqueue(files, manual=False, force=False, priority=0):
@@ -23269,8 +23293,21 @@ def q2f_scan(force=False):
         _q2f_lock.release()
 
 
-def q2f_manual(rels, force=False, priority=5):
-    """手动勾选固定文件转换。"""
+def q2f_manual(rels=None, dir_rel=None, dir_rels=None, force=False, priority=5):
+    """手动转换：按文件(rels) 或 整个文件夹(dir_rel / dir_rels) 勾选入队。"""
+    dirs = list(dir_rels or [])
+    if dir_rel:
+        dirs = [dir_rel] + dirs
+    if dirs:
+        picked = []
+        for dp in dirs:
+            fs, err = q2f_walk(dp)
+            if err:
+                return {'ok': False, 'msg': '列源失败: ' + err}
+            picked += fs
+        if not picked:
+            return {'ok': False, 'msg': '所选文件夹下没有可转换文件: ' + '、'.join(dirs)}
+        return q2f_enqueue(picked, manual=True, force=force, priority=priority)
     files, err = q2f_walk()
     if err:
         return {'ok': False, 'msg': '列源失败: ' + err}
@@ -23413,7 +23450,9 @@ def q2f_worker():
                 continue
             it['status'] = 'running'
             it['started'] = time.time()
+            it['began_at'] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(it['started']))
             it['msg'] = '正在下载…'
+            it['deleted_src'] = False
             q2f_save(s)
 
             def prog(xfer, sp, eta, size):
@@ -23450,10 +23489,21 @@ def q2f_worker():
                 cur['progress'] = 100
                 cur['bytes_xfer'] = cur['size']
                 cur['rapid'] = bool(rapid)
+                # ★ 转换成功投递 115 后，按设置删除夸克中转源文件
+                if _q2f_del_after(st):
+                    try:
+                        _dok, _dmsg = q2f_delete_source(cur['rel'])
+                        cur['deleted_src'] = bool(_dok)
+                        cur['msg'] = (cur['msg'] or '') + ' · ' + _dmsg
+                    except Exception as _de:
+                        logger.warning('[Q2F] del src: %s', _de)
+                        cur['msg'] = (cur['msg'] or '') + ' · 删源异常:' + str(_de)[:40]
                 st['recent'] = ([{'rel': cur['rel'], 'size': cur['size'], 'ok': True,
                                   'msg': msg, 'ts': cur['finished']}] + st['recent'])[:60]
                 st['history'] = ([dict(rel=cur['rel'], size=cur['size'], ok=True,
                                        duration=cur['duration'], ts=cur['finished'],
+                                       began_at=cur.get('began_at') or '',
+                                       deleted_src=bool(cur.get('deleted_src')),
                                        rapid=bool(rapid), manual=bool(cur.get('manual')))]
                                  + st['history'])[:500]
                 st['stats']['total_runs'] = (st['stats'].get('total_runs') or 0) + 1
@@ -23719,6 +23769,15 @@ def q2f_status():
         {'running': 0, 'queued': 1, 'failed': 2, 'paused': 3,
          'cancelled': 4, 'done': 5}.get(x.get('status'), 9),
         -int(x.get('priority') or 0), x.get('queued_ts') or 0))
+    _now = time.time()
+    items_out = []
+    for x in items_sorted:
+        y = dict(x)
+        y['began_at'] = x.get('began_at') or (
+            time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(x['started']))
+            if x.get('started') else '')
+        y['elapsed'] = round(_now - x['started'], 1) if (x.get('status') == 'running' and x.get('started')) else 0
+        items_out.append(y)
     return {'ok': True, 'enabled': s.get('enabled', True), 'paused': s.get('paused', False),
             'last_scan': s.get('last_scan', 0), 'last_msg': s.get('last_msg', ''),
             'src': Q2F_SRC, 'dst': Q2F_DST, 'cd2': Q2F_CD2, 'mt': Q2F_MT_SRC,
@@ -23731,7 +23790,7 @@ def q2f_status():
             'speed': round(speed, 1), 'avg_speed': round(avg, 1),
             'eta': eta, 'eta_finish': time.time() + eta if eta else 0,
             'remain': remain, 'rapid_hits': sum(1 for x in done if x.get('rapid')),
-            'items': items_sorted[:120], 'recent': s.get('recent', [])[:30],
+            'items': items_out[:120], 'recent': s.get('recent', [])[:30],
             'history': s.get('history', [])[:100],
             'services': q2f_services(), 'mt_task': q2f_mt_info(),
             'worker': _q2f_worker_started,
@@ -30084,7 +30143,7 @@ class H(BaseHTTPRequestHandler):
             return self._j({'ok': True, 'enabled': _s.get('enabled', True),
                             'msg': '自动监控已' + ('启用' if _s.get('enabled', True) else '停用')})
         if u.path == '/api/q2f/manual':
-            return self._j(q2f_manual(b.get('rels') or [], force=bool(b.get('force'))))
+            return self._j(q2f_manual(b.get('rels') or [], dir_rels=b.get('dir_rels') or [], force=bool(b.get('force'))))
         if u.path == '/api/q2f/link':
             return self._j(q2f_link((b.get('path') or '').strip()))
         if u.path == '/api/q2f/action':

@@ -33494,6 +33494,7 @@ async function ptAutoClean(btn){
 const ND_T={t:null,page:'',loader:null};
 const CV={sel:new Set(),filter:'all',logFilter:'all'};
 const MAN={files:[],sel:new Set(),q:'',sort:'name'};
+const MANF={dirs:[],map:{},sel:new Set(),q:''};
 const REC={q:'',filter:'all'};
 const BR={path:'/115',q:'',items:[],parent:'/'};
 
@@ -33947,7 +33948,7 @@ async function renderCvConsole(){
       +'<div style="max-height:520px;overflow:auto"><table class="nd-tbl"><thead><tr>'
       +'<th><input type="checkbox" class="nd-chk" id="cv_all" onchange="cvSelAll(this.checked)"></th>'
       +'<th>优先</th><th>文件</th><th>大小</th><th>SHA1</th><th>状态</th><th>进度</th><th>已传 / 总量</th>'
-      +'<th>速度</th><th>单项 ETA</th><th>耗时</th><th>时间</th><th>操作</th>'
+      +'<th>速度</th><th>单项 ETA</th><th>耗时</th><th>开始时间</th><th>操作</th>'
       +'</tr></thead><tbody id="cv_rows"></tbody></table></div>'
       +'<div class="row" style="gap:8px;flex-wrap:wrap;margin-top:9px"><span class="nd-mini" id="cv_tbl_note"></span></div>'
     +'</div>'
@@ -34051,7 +34052,7 @@ function cvRowsRender(d){
     return '<tr><td><input type="checkbox" class="nd-chk cvck" value="'+esc(k)+'" '+(CV.sel.has(k)?'checked':'')+' onchange="cvSelOne(\''+esc(k)+'\',this.checked)"></td>'
       +'<td class="nd-mini">'+(x.priority||0)+'</td>'
       +'<td><div style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(x.rel)+'">'+ico+' '+esc(x.rel)+'</div>'
-      +'<div class="nd-mini">'+(x.manual?'手动选择':'自动发现')+(x.retry?' · 重试 '+x.retry+' 次':'')+'</div></td>'
+      +'<div class="nd-mini">'+(x.manual?'手动选择':'自动发现')+(x.retry?' · 重试 '+x.retry+' 次':'')+(x.deleted_src?' · 🗑源已删':'')+'</div></td>'
       +'<td>'+ndSize(x.size)+'</td>'
       +'<td><code class="nd-mini">'+(x.sha1?esc(String(x.sha1).slice(0,10))+'…':'—')+'</code></td>'
       +'<td>'+ndPill(x.status)+'</td>'
@@ -34059,8 +34060,8 @@ function cvRowsRender(d){
       +'<td class="nd-mini">'+ndSize(x.bytes_xfer||0)+' / '+ndSize(x.size)+'</td>'
       +'<td class="nd-mini">'+(x.status==='running'?ndSpd(x.speed):'—')+'</td>'
       +'<td class="nd-mini">'+(x.status==='running'?ndEta(x.eta):'—')+'</td>'
-      +'<td class="nd-mini">'+ndDur(x.duration)+'</td>'
-      +'<td class="nd-mini">'+ndClock(x.finished||x.started||x.queued_ts)+'</td>'
+      +'<td class="nd-mini">'+((x.status==='running')?ndDur(x.elapsed):ndDur(x.duration))+'</td>'
+      +'<td class="nd-mini">'+(x.began_at?esc(x.began_at):ndClock(x.started||x.queued_ts))+'</td>'
       +'<td style="white-space:nowrap">'
       +'<button class="btn sm" onclick="cvOne(\''+esc(k)+'\',\'priority\',1)" title="提高优先级">⬆</button> '
       +'<button class="btn sm" onclick="cvOne(\''+esc(k)+'\',\'priority\',0)" title="降低优先级">⬇</button> '
@@ -34142,6 +34143,7 @@ async function renderCvManual(){
       +'</div></div>'
       +'<div class="nd-cfg" style="margin-top:11px" id="man_cfg"></div>'
     +'</div>'
+    +ndCard('📁 按文件夹批量转换 · Folder Conversion','<div id="man_folders"><div class="sub">读取中…</div></div>')
     +ndCard('📌 手动转换说明','<div class="nd-note">手动选择的文件以 <b>优先级 5</b> 入队（高于自动发现的 0），会先被转换。'
       +'「立即转换（强制重传）」对已完成的文件也重新下载并投递，适合修复不完整文件。'
       +'预计耗时按历史平均速率估算，实际受夸克限速与 OpenList 本地代理影响。</div>')
@@ -34168,6 +34170,7 @@ async function manLoad(){
     ['失败重试',String((((st&&st.settings)||{}).retry)||3)+' 次']];
     cfg.innerHTML=C.map(x=>'<div class="row2"><span class="k">'+esc(x[0])+'</span><span class="v">'+esc(String(x[1]))+'</span></div>').join('');}
   manRender();
+  manFoldersLoad();
 }
 function manRender(){
   const q=(MAN.q||'').toLowerCase();
@@ -34220,6 +34223,57 @@ async function manSubmit(force,rels){
     if(r.ok){ MAN.sel.clear(); setTimeout(()=>{manLoad();},1200); }
   }catch(e){toast('提交失败：'+e,'err',4000);}
 }
+async function manFoldersLoad(){
+  const files=MAN.files||[];
+  const map={};
+  files.forEach(f=>{ const d=(f.rel.indexOf('/')>=0)?f.rel.slice(0,f.rel.lastIndexOf('/')):'（根目录）';
+    if(!map[d])map[d]={count:0,size:0};
+    map[d].count++; map[d].size+=f.size; });
+  const dirs=Object.keys(map).sort();
+  const el=document.getElementById('man_folders'); if(!el)return;
+  if(!dirs.length){el.innerHTML='<div class="nd-empty">源目录暂无文件夹</div>';return;}
+  MANF.dirs=dirs; MANF.map=map;
+  el.innerHTML='<div class="nd-toolbar">'
+    +'<input id="manf_q" class="btn sm" style="min-width:190px;text-align:left" placeholder="🔍 过滤文件夹…" oninput="MANF.q=this.value;manFoldersRender()">'
+    +'<button class="btn sm" onclick="manFoldersSel(true)">☑ 全选</button>'
+    +'<button class="btn sm" onclick="manFoldersSel(false)">☐ 全不选</button>'
+    +'<span class="sep"></span><span class="nd-mini" id="manf_count"></span></div>'
+    +'<div style="max-height:300px;overflow:auto"><table class="nd-tbl"><thead><tr>'
+    +'<th><input type="checkbox" class="nd-chk" id="manf_all" onchange="manFoldersSel(this.checked)"></th>'
+    +'<th>文件夹</th><th>文件数</th><th>容量</th><th>状态</th></tr></thead>'
+    +'<tbody id="manf_rows"></tbody></table></div>'
+    +'<div class="row" style="gap:8px;margin-top:9px"><span class="nd-mini" id="manf_selinfo"></span>'
+    +'<span style="flex:1"></span>'
+    +'<button class="btn sm" onclick="manFoldersSubmit(false)">＋ 加入转换队列</button>'
+    +'<button class="btn sm acc" onclick="manFoldersSubmit(true)">⚡ 立即转换（强制）</button></div>';
+  manFoldersRender();
+}
+function manFoldersRender(){
+  const q=(MANF.q||'').toLowerCase();
+  const dirs=(MANF.dirs||[]).filter(d=>!q||d.toLowerCase().indexOf(q)>=0);
+  const el=document.getElementById('manf_rows'); if(!el)return;
+  const c=document.getElementById('manf_count'); if(c)c.textContent='显示 '+dirs.length+' / '+MANF.dirs.length+' 个文件夹';
+  el.innerHTML=dirs.length?dirs.map(d=>{
+    const m=MANF.map[d];
+    return '<tr><td><input type="checkbox" class="nd-chk manfck" value="'+esc(d)+'" '+(MANF.sel.has(d)?'checked':'')+' onchange="manFoldersOne(''+esc(d)+'',this.checked)"></td>'
+      +'<td><div style="max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(d)+'">📁 '+esc(d)+'</div></td>'
+      +'<td>'+m.count+'</td><td>'+ndSize(m.size)+'</td>'
+      +'<td><span class="nd-pill off">未入队</span></td></tr>';
+  }).join(''):'<tr><td colspan="5"><div class="nd-empty">没有匹配的文件夹</div></td></tr>';
+  const info=document.getElementById('manf_selinfo');
+  if(info)info.textContent='已选 '+MANF.sel.size+' 个文件夹';
+}
+function manFoldersOne(d,on){ if(on)MANF.sel.add(d); else MANF.sel.delete(d); manFoldersRender(); }
+function manFoldersSel(on){ MANF.sel.clear(); if(on)(MANF.dirs||[]).forEach(d=>MANF.sel.add(d)); manFoldersRender(); }
+async function manFoldersSubmit(force){
+  const picked=[...MANF.sel];
+  if(!picked.length){toast('请先勾选要转换的文件夹','err',3500);return;}
+  try{
+    const r=await apiPost('/api/q2f/manual',{dir_rels:picked,force:!!force});
+    toast((r.msg||'已提交')+' · 新增 '+(r.added||[]).length+' 个',r.ok?'ok':'err',4500);
+    if(r.ok){ MANF.sel.clear(); setTimeout(()=>{manLoad();},1200); }
+  }catch(e){toast('提交失败：'+e,'err',4000);}
+}
 
 // ═══════════ ⑦ 转换组：任务记录 ═══════════
 async function renderCvRecords(){
@@ -34233,7 +34287,7 @@ async function renderCvRecords(){
       +'<span class="sep"></span><button class="btn sm" onclick="recExport()">⬇ 导出 CSV</button>'
       +'<button class="btn sm" onclick="cvLoad()">↻ 刷新</button></div>'
       +'<div style="max-height:480px;overflow:auto"><table class="nd-tbl"><thead><tr>'
-      +'<th>完成时间</th><th>文件</th><th>大小</th><th>结果</th><th>耗时</th><th>类型</th><th>秒传</th><th>说明</th>'
+      +'<th>开始时间</th><th>文件</th><th>大小</th><th>结果</th><th>耗时</th><th>类型</th><th>秒传</th><th>说明</th>'
       +'</tr></thead><tbody id="rec_rows"></tbody></table></div></div>'
     +'</div>';
   ndBind(recLoad,15000);
@@ -34251,12 +34305,12 @@ function recRender(){
       ['平均速率',ndSpd(d.avg_speed||0),''],['峰值速率',ndSpd((d.stats||{}).peak_speed||0),''],['秒传命中',d.rapid_hits||0,'次']]
       .map(x=>'<div class="k"><div class="lab">'+x[0]+'</div><b>'+x[1]+'</b><div class="foot">'+x[2]+'</div></div>').join('')+'</div>';
   const el=document.getElementById('rec_rows'); if(!el)return;
-  el.innerHTML=list.length?list.map(x=>'<tr><td class="nd-mini">'+ndTime(x.ts)+'</td>'
+  el.innerHTML=list.length?list.map(x=>'<tr><td class="nd-mini">'+(x.began_at?esc(x.began_at):ndTime(x.ts))+'</td>'
     +'<td><div style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(x.rel||'')+'">'+esc(x.rel||'')+'</div></td>'
     +'<td>'+ndSize(x.size)+'</td><td>'+(x.ok?'<span class="nd-pill ok">✓ 成功</span>':'<span class="nd-pill err">✗ 失败</span>')+'</td>'
     +'<td class="nd-mini">'+ndDur(x.duration)+'</td><td class="nd-mini">'+(x.manual?'手动':'自动')+'</td>'
     +'<td>'+(x.rapid?'<span class="nd-pill ok">⚡ 命中</span>':'<span class="nd-pill off">实传</span>')+'</td>'
-    +'<td class="nd-mini">'+esc(x.msg||'—')+'</td></tr>').join('')
+    +'<td class="nd-mini">'+esc(x.msg||'—')+(x.deleted_src?' · 🗑源已删':'')+'</td></tr>').join('')
     :'<tr><td colspan="8"><div class="nd-empty">暂无匹配记录</div></td></tr>';
 }
 function recExport(){
@@ -34300,6 +34354,7 @@ async function setLoad(){
     ['mt_after','完成后自动创建 MT 任务组','checkbox','队列清空后自动为 115/待整理/夸克 创建整理方案'],
     ['notify','完成后播报通知','checkbox','全部完成后推送一次结果通知'],
     ['keep_days','记录保留天数','number','历史任务记录保留时长'],
+    ['delete_after','完成后删除夸克源文件','checkbox','转换成功投递 115 后，自动删除夸克中转里的源文件（释放夸克空间）；关闭则仅转换不删源'],
   ];
   const form=document.getElementById('set_form');
   if(form)form.innerHTML=F.map(f=>{
@@ -34320,7 +34375,7 @@ async function setLoad(){
     paths.innerHTML=P.map(x=>'<div class="row2"><span class="k">'+esc(x[0])+'</span><span class="v">'+esc(x[1])+'</span></div>').join('');}
 }
 async function setSave(btn){
-  const keys=['auto','interval','concurrency','speed_limit','retry','mt_after','notify','keep_days'];
+  const keys=['auto','interval','concurrency','speed_limit','retry','mt_after','notify','keep_days','delete_after'];
   const patch={};
   keys.forEach(k=>{const e=document.getElementById('set_'+k); if(!e)return;
     if(e.type==='checkbox')patch[k]=e.checked; else {let v=Number(e.value||0); if(k==='interval')v=Math.max(30,v); if(k==='concurrency')v=Math.max(1,Math.min(5,v)); patch[k]=v;}});
@@ -34331,7 +34386,7 @@ async function setSave(btn){
 }
 async function setDefaults(){
   if(!confirm('恢复全部转换设置为默认值？'))return;
-  const def={auto:true,interval:120,concurrency:1,speed_limit:0,retry:3,mt_after:false,notify:true,keep_days:30};
+  const def={auto:true,interval:120,concurrency:1,speed_limit:0,retry:3,mt_after:false,notify:true,keep_days:30,delete_after:true};
   try{const r=await apiPost('/api/q2f/action',{act:'settings',patch:def});toast(r.msg||'已恢复默认',r.ok?'ok':'err',3500);setLoad();}catch(e){toast('失败：'+e,'err',3500);}
 }
 
