@@ -1,5 +1,18 @@
 # Changelog
 
+## [3.2.0] - 2026-11-13 · 功能线对齐线上（夸克/OpenList/CD2/九宫格/embyfix）+ 侧栏交互修正
+
+### Added / 对齐
+- **对齐 NAS 线上 00:41 功能线**：夸克→115 自动转存、OpenList、CloudDrive2(CD2)、3×3 实时观看九宫格、embyfix 等全部功能回归并固化到仓库（此前仅在 NAS 真源，从未入 git）。
+- **侧栏交互修正（用户反馈）**：点击/悬停模块后不再残留发光框——`.nav button:focus/:focus-visible` 清除发光、`box-shadow` 归零、`.nav-liq` 辉光降透明度，激活态仅由 `.on` 单一标识，鼠标滑过不残留。
+
+### Security（凭据环境变量化，privacy_scan blocking=0）
+- 原硬编码的 DB 密码、RT 账号、群主 TG-ID、各内网 IP、私有域名、本地挂载路径全部改为 `{{MH_*}}` 占位（serve 时由后端 `_inject_env` 注入；线上保留真实凭据运行）。
+- 私有域名 `ccwu.cc` / 内网段 `192.168.x` / TG UID / 32-hex 等全部脱敏，`privacy_scan` 重新校验 **blocking=0**。
+
+### 实测
+- 线上 served 校验：`夸克=35 / OpenList=38 / CD2=74 / 九宫格 repeat(3)=8 / embyfix=25` 全部在位；HTTP 200；侧栏截图确认无残留发光框。
+
 ## [2.1.0] - 2026-11-13 · 实时观看会话卡升级 3×3 九宫格 + 实例摘要 + 详细参数
 
 ### Added（实时观看面板 v3）

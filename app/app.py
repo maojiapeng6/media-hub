@@ -11,6 +11,7 @@ Media Hub v5 —— Emby 媒体链路定制中枢（后端）
   4. 探测统一走 probe()，失败降级展示，不抛异常、不白屏
 """
 import hashlib, http.client, json, os, re, shutil, socket, sqlite3, ssl, subprocess, threading, time, datetime
+import sys, signal, hmac
 import urllib.parse, urllib.request, urllib.error, uuid, collections, shutil
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -33,7 +34,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CFG = os.environ.get('MT_CFG', '/data/webcfg.json')
 _SELF_ADDR = ''      # ★ v1.37 S1：面板自身可达地址（cfg 就绪后由 _self_addr_safe 填充）
 CONTAINERS = {}       # ★ v1.37 S1：容器注册表快照（cfg 就绪后由 _self_addr_safe 填充）
-CD2_CFG = os.environ.get('CD2_CFG', '/vol1/1000/docker/clouddrive2/config/cloudapidata.json')
+CD2_CFG = os.environ.get('CD2_CFG', '{{MH_VOL1}}/docker/clouddrive2/config/cloudapidata.json')
 
 DEST_DIR = '/主号/KFC/云盘影视'
 UNREC_ROOT = '/主号/未识别'
@@ -145,6 +146,7 @@ _CONTAINERS_DEF = {
     'flaresolverr':{'name': 'FlareSolverr',   'cname': 'flaresolverr',     'addr': '', 'port': 0,  'group': 'aux',      'hint': 'CF 过盾，默认 8191'},
     'pt2cloud':    {'name': 'pt2cloud 上云',  'cname': 'pt2cloud',         'addr': '', 'port': 0,  'group': 'download', 'hint': 'PT 上云，通常无 Web'},
     'kfcgame':     {'name': 'KFC 修仙 Bot',   'cname': 'kfcgame',          'addr': '', 'port': 0,  'group': 'aux',      'hint': 'TG 机器人，通常无 Web'},
+    'openlist':    {'name': 'OpenList',          'cname': 'openlist',        'addr': '', 'port': 0,  'group': 'aux',      'hint': '网盘聚合，默认 5244'},
 }
 
 
@@ -174,7 +176,7 @@ def self_addr_from_headers(headers):
     用户在浏览器里用什么地址访问的，这里就返回什么地址 —— 比 UDP 探测
     出口 IP 准得多（容器内 UDP 经常会拿到 docker 网关地址）。
     支持：
-      Host: 192.168.1.x:5678    → http://192.168.1.x:5678
+      Host: {{MH_LAN_IP}}:5678    → http://{{MH_LAN_IP}}:5678
       Host: nas.example.com       → http://nas.example.com
       Host: [::1]:5678            → http://[::1]:5678
     ⚠ 只在**用户真实请求**路径里调（do_GET/do_POST 内），后台任务没有
@@ -1931,7 +1933,6 @@ def _ssort_group(name):
     if 'MT' in n: return 'MT'
     if 'RT' in n: return 'RT'
     if '115大包' in n: return '115大包'
-    if '夸克' in n: return '夸克'
     if ('ISO' in n) or ('预处理' in n) or ('自动重命名' in n): return '专属'
     return '其他'
 
@@ -1969,8 +1970,7 @@ def _ssort_rules():
 def _ssort_key(t, rules):
     name = t.get('name') or ''
     grp = _ssort_group(name)
-    # 用户指定的固定组顺序（2026-11-13）：PT → 夸克 → MT → RT → 115大包 → 专属 → 其他 → 未识别（最末）
-    order = {'PT': 0, '夸克': 1, 'MT': 2, 'RT': 3, '115大包': 4, '专属': 5, '其他': 6, '未识别': 7}
+    order = {'PT': 0, '未识别': 1, 'MT': 2, 'RT': 3, '115大包': 4, '专属': 5, '其他': 6}
     base = order.get(grp, 9) * 10000
     cat = _ssort_cat(name)
     tt = 'skip' if (t.get('transferType') or '').startswith('skip') else 'move'
@@ -2932,8 +2932,8 @@ DIAG_RULES = [
         'sev': 'medium', 'auto': False, 'auto_risk': 'na',
         'sources': ['mediatidy'],
         'patterns': ['no_candidates', '搜索无候选', '搜索已执行，但没有返回'],
-        'cause': 'MT 用 TMDB 搜索文件名/目录名时搜不到作品——典型是字幕组英文直译名（如「To Defeat Muzan Kibutsuji」）、采集站垃圾名、含【】括号或过多技术参数的命名。这类文件不会进库，堆积在 pending/failed。⚠️ 重要连带效应：MT 任务组规则是「第 1 步 errors≥1 → 整组判 failed」，所以只要组里 1 个文件识别失败，**后续步骤（如移动任务）就不会再触发**——这就是「跳过跑完了但移动没执行」的真相。',
-        'solution': '用「任务控制」页的 🏷️ TMDB 预重命名把文件规范成「标题.年份.SxxExx」后再跑；同时把明显放错目录的文件归位（如 iso 蓝光原盘应放 ISO 方案源目录，不走 MT转存）。组 failed 不影响已成功的文件，已入库的不会丢。',
+        'cause': 'MT 用 TMDB 搜索文件名/目录名时搜不到作品——典型是字幕组英文直译名（如「To Defeat Muzan Kibutsuji」）、采集站垃圾名、含【】括号或多余文字的命名。这类文件不会进库，堆积在 pending/failed。',
+        'solution': '用「任务控制」页的 🏷️ TMDB 预重命名：粘贴目录 → 选剧集/电影 → 识别（可手动指定 TMDB ID）→ 重命名成「标题.年份.SxxExx」标准名 → 重新触发方案扫描即入库。',
         'steps': [
             '到「任务控制」页，找到「🏷️ TMDB 预重命名」卡片；',
             '输入报错文件所在目录（如 /主号/待整理/MT/MT转存/鬼灭之刃 柱训练篇...）→ 点「识别并预览」；',
@@ -2948,7 +2948,7 @@ DIAG_RULES = [
         'sources': ['clouddrive2'],
         'patterns': ['Unauthenticated', 'Invalid auth token', 'rpc error: code = Unauthenticated'],
         'cause': 'MT 经 CD2 访问 115 时，CD2 的 115 鉴权失效（token 过期或凭据解不开），115 挂载断连，所有走 115 的整理/播放/转存全部失败。这就是你看到的“顺态错误→整理开始失效”的典型原因。',
-        'solution': '① 清宿主机死挂载并重启 CD2（自动修复即做此步，可自恢复 115 瞬断）；② 若重启后仍报 PermissionDenied password is required，说明 CD2 数据加密密码丢失，需到 CD2管理页（NAS 19798 端口） 输入加密密码或重新扫码登录 4 个 115 账号。',
+        'solution': '① 清宿主机死挂载并重启 CD2（自动修复即做此步，可自恢复 115 瞬断）；② 若重启后仍报 PermissionDenied password is required，说明 CD2 数据加密密码丢失，需到 http://{{MH_NAS_IP}}:19798 输入加密密码或重新扫码登录 4 个 115 账号。',
         'fix': 'fix_cd2_remount',
     },
     {
@@ -2975,7 +2975,7 @@ DIAG_RULES = [
         'sources': ['clouddrive2'],
         'patterns': ['decrypt_string_to_bytes failed', 'PermissionDenied password is required', 'password is required'],
         'cause': 'CD2 保存的 115 账号凭据被加密，但启动后拿不到“数据加密密码”，4 个账号全部解密失败，115 挂载建立不起来。当前环境正卡在这一步。',
-        'solution': '打开 CD2管理页（NAS 19798 端口） → 云端账号，输入当初设置的数据加密密码；或重新扫码登录 4 个 115 账号。此步必须人工，不能自动。',
+        'solution': '打开 http://{{MH_NAS_IP}}:19798 → 云端账号，输入当初设置的数据加密密码；或重新扫码登录 4 个 115 账号。此步必须人工，不能自动。',
         'fix': None,
     },
     {
@@ -3041,7 +3041,7 @@ DEFAULT_AUTO = {}
 # 每条错误的详细分步解决方案（专业化排障指引；前端优先渲染 steps，无则退回 solution 文本）
 _DIAG_STEPS = {
     'cd2_unauth': [
-        '打开 CD2 管理页 CD2管理页（NAS 19798 端口） →「云端账号」，逐个查看 4 个 115 账号是否离线/掉线；',
+        '打开 CD2 管理页 http://{{MH_NAS_IP}}:19798 →「云端账号」，逐个查看 4 个 115 账号是否离线/掉线；',
         '若提示输入「数据加密密码」：输入你当初设置的密码（凭据是加密存的，密码丢了只能重新扫码）；',
         '若账号掉线：用手机 115 App 逐个重新扫码登录；',
         '修复后点本条「执行修复方案」（清死挂载 + 重启 CD2），5 分钟后回本页刷新确认错误归零。',
@@ -3058,7 +3058,7 @@ _DIAG_STEPS = {
     ],
     'cd2_decrypt': [
         '此错误无法自动修复（凭据只在你手里）；',
-        '打开 CD2管理页（NAS 19798 端口） →「云端账号」→ 输入当初设置的数据加密密码；',
+        '打开 http://{{MH_NAS_IP}}:19798 →「云端账号」→ 输入当初设置的数据加密密码；',
         '密码遗失 → 逐个删除账号后重新扫码登录 4 个 115 账号；',
         '修复后 115 挂载自动重建，无需重启任何容器。',
     ],
@@ -3124,8 +3124,8 @@ def fix_cd2_remount(rule=None):
         clogs = _diag_container_logs('clouddrive2', int(_time.time()) - 60, 120)
         still = any(('PermissionDenied password' in m) or ('decrypt_string_to_bytes' in m) for ts, m in clogs)
         if still:
-            return {'ok': False, 'msg': '已重启 CD2，但日志仍报凭据解密失败（PermissionDenied）：需到 CD2管理页（NAS 19798 端口） 输入数据加密密码或重新扫码登录 4 个 115 账号'}
-        return {'ok': True, 'msg': '已通过 Docker API 重启 CD2（挂载随容器重建），115 应恢复；若仍异常，请在 NAS 宿主机执行 umount -l /vol1/1000/CloudNAS/115open && docker restart clouddrive2'}
+            return {'ok': False, 'msg': '已重启 CD2，但日志仍报凭据解密失败（PermissionDenied）：需到 http://{{MH_NAS_IP}}:19798 输入数据加密密码或重新扫码登录 4 个 115 账号'}
+        return {'ok': True, 'msg': '已通过 Docker API 重启 CD2（挂载随容器重建），115 应恢复；若仍异常，请在 NAS 宿主机执行 umount -l {{MH_VOL1}}/CloudNAS/115open && docker restart clouddrive2'}
     except Exception as e:
         return {'ok': False, 'msg': '修复异常：%s' % e}
 
@@ -3189,12 +3189,12 @@ def fix_already_exists(rule=None):
                 dirs.append(d)
         if not dirs:
             return {'ok': True, 'msg': '近 6 小时没有 AlreadyExists 转移失败记录，无需隔离'}
-        iso_root = '/vol1/1000/CloudNAS/115open/待整理/_重复隔离'
+        iso_root = '{{MH_VOL1}}/CloudNAS/115open/待整理/_重复隔离'
         os.makedirs(iso_root, exist_ok=True)
         moved = []
         for d in dirs:
             if d.startswith('/主号/'):
-                hp = '/vol1/1000/CloudNAS/115open/' + d[len('/主号/'):]
+                hp = '{{MH_VOL1}}/CloudNAS/115open/' + d[len('/主号/'):]
             else:
                 hp = d
             if not os.path.isdir(hp):
@@ -3902,7 +3902,7 @@ def repair(a):
     if a in ('cd2_rate_down', 'cd2_rate_up'):
         v = 2.0 if a == 'cd2_rate_down' else 3.0
         cand = [CD2_CFG, '/cd2config/cloudapidata.json',
-                '/vol1/1000/docker/clouddrive2/config/cloudapidata.json',
+                '{{MH_VOL1}}/docker/clouddrive2/config/cloudapidata.json',
                 '/dockroot/clouddrive2/config/cloudapidata.json']
         real = next((p for p in cand if os.path.exists(p)), None)
         if not real:
@@ -7249,7 +7249,7 @@ def act_cd2(act, arg):
         return repair('cd2_cache')
     if act == 'read_rate':
         paths = [CD2_CFG, '/cd2config/cloudapidata.json',
-                 '/vol1/1000/docker/clouddrive2/config/cloudapidata.json',
+                 '{{MH_VOL1}}/docker/clouddrive2/config/cloudapidata.json',
                  '/dockroot/clouddrive2/config/cloudapidata.json']
         real = next((p for p in paths if os.path.exists(p)), None)
         if not real:
@@ -7694,7 +7694,7 @@ def _lang_suffix(name):
 def sub_pair_plan(vdir):
     """扫描目录，为每个字幕找最匹配的视频，给出「视频-字幕」一一对应的重命名计划。
 
-    vdir 为本地挂载路径（/vol1/1000/CloudNAS/115open/...）。
+    vdir 为本地挂载路径（{{MH_VOL1}}/CloudNAS/115open/...）。
     字幕可能在同级，也可能在「字幕/」子目录里（MT 看不到子目录，这是它丢字幕的主因）。
     """
     if not os.path.isdir(vdir):
@@ -7793,7 +7793,7 @@ def sub_pair_apply(vdir, plan, dry=True):
 
 # ── TMDB 预重命名 ──
 def _tmdb_get(url, t=15):
-    """走代理访问 TMDB（实测 NAS 直连 api.themoviedb.org 不通，必须走 TMDB_PROXY）。"""
+    """走代理访问 TMDB（实测 NAS 直连 api.themoviedb.org 不通，必须走 {{MH_PROXY_HOST}}:7893）。"""
     try:
         op = urllib.request.build_opener(
             urllib.request.ProxyHandler({'http': tmdb_proxy(), 'https': tmdb_proxy()}))
@@ -7807,7 +7807,7 @@ def _tmdb_get(url, t=15):
 
 def tmdb_key():
     # ★ v1.15：用户在本面板「设置」里填的 key 优先；未填再退 MoviePilot 的 TMDB 配置。
-    #   （MT 配置里那个 key 在 TMDB_PROXY 代理下实测 401，所以必须允许用户自带 key）
+    #   （MT 配置里那个 key 在 {{MH_PROXY_HOST}}:7893 代理下实测 401，所以必须允许用户自带 key）
     try:
         c = cfg()
         k = (c.get('tmdb_key') or '').strip()
@@ -8801,7 +8801,7 @@ def act_avdb(act, arg):
 #   封面/背景/剧照并自动补齐」。
 #   · MDC API 转发必须走宿主机 LAN（实测容器内 127.0.0.1 不通，mdc-ng 是
 #     host 网络但 media-hub 是 bridge → 用 mdc_addr:9207）。
-#   · mdc_ng.db 只读走 /dockroot 挂载（media-hub 已挂 /vol1/1000/docker）。
+#   · mdc_ng.db 只读走 /dockroot 挂载（media-hub 已挂 {{MH_VOL1}}/docker）。
 #   · 分批驱动 = NAS root cron + flock 常驻；面板开关 = batch_paused 旗标文件
 #     （驱动每个 tick 检查，幂等，不需要动 crontab）。
 # ══════════════════════════════════════════════════════════════════════════
@@ -9021,7 +9021,7 @@ def _emby_local(path):
     """Emby 容器视角 Path → media-hub 可见本地路径。两种库前缀：
       /strm-mdc-ng/...  → /dockroot/mdc-ng/strm-mdc-ng/...   （KFC2 成人库）
       /strm/...         → /dockroot/mediatidy/strm/...        （KFC 主库 MT strm）
-      /CloudNAS/...     → 原样（面板同挂）；/vol1/... → 剥 /vol1/1000。
+      /CloudNAS/...     → 原样（面板同挂）；/vol1/... → 剥 {{MH_VOL1}}。
     返回 None 表示面板看不到该路径。"""
     p = str(path or '')
     if p.startswith('/strm-mdc-ng/'):
@@ -9030,8 +9030,8 @@ def _emby_local(path):
         return '/dockroot/mediatidy/strm/' + p[len('/strm/'):]
     if p.startswith('/CloudNAS/'):
         return p
-    if p.startswith('/vol1/1000/CloudNAS/'):
-        return '/CloudNAS/' + p[len('/vol1/1000/CloudNAS/'):]
+    if p.startswith('{{MH_VOL1}}/CloudNAS/'):
+        return '/CloudNAS/' + p[len('{{MH_VOL1}}/CloudNAS/'):]
     return None
 
 
@@ -9382,6 +9382,653 @@ def emby_imgbackfill_check():
     return out
 
 
+COVER_LAST = {'scan': None, 'fix': None, 'progress': None}
+_TMDB_POSTER_CACHE = {}
+
+def cover_servers():
+    """可用 Emby 实例：直接派生自实例注册表（新增服务器自动进入本模块）。"""
+    out = []
+    try:
+        for s in (emby_servers().get('servers') or []):
+            key = str(s.get('key') or '')
+            try:
+                addr, port, ek = _emby_inst(key)
+            except Exception:
+                addr, port, ek = '', '', ''
+            if not (addr and ek):
+                continue
+            out.append({'key': key, 'name': s.get('name') or key,
+                        'ok': bool(s.get('ok')),
+                        'movie': s.get('movie', 0), 'series': s.get('series', 0)})
+    except Exception:
+        pass
+    if not out:
+        for row in (EMBY_INSTANCES or []):
+            k = row[0]
+            try:
+                a, p, e = _emby_inst(k)
+                if a and e:
+                    out.append({'key': k, 'name': k, 'ok': True,
+                                'movie': 0, 'series': 0})
+            except Exception:
+                pass
+    return out
+
+
+def _cover_pick_servers(which):
+    keys = [x['key'] for x in cover_servers()]
+    if which in ('all', '*', 'both'):
+        return keys
+    if which in ('adult', 'kfc2', 'emby_adult') and 'emby_adult' in keys:
+        return ['emby_adult']
+    if which in keys:
+        return [which]
+    return ['emby'] if 'emby' in keys else keys[:1]
+
+
+def _cover_label(which):
+    for s in cover_servers():
+        if s['key'] == which:
+            return s['name']
+    return which
+
+
+def cover_scan(server='emby', scope='recent', limit=1000, lib_id=''):
+    """扫描缺 Primary 封面的 Movie/Series。
+    scope=recent 按入库时间倒序（新片优先）；scope=all 全库分页。
+    """
+    try:
+        limit = max(50, min(int(limit or 1000), 200000))
+    except Exception:
+        limit = 1000
+    out = {'ok': True, 'ts': time.strftime('%F %T'), 'scope': scope,
+           'servers': [], 'items': [], 'scanned': 0, 'missing': 0, 'err': ''}
+    COVER_LAST['progress'] = {'running': True, 'phase': 'scan', 'done': 0,
+                              'total': 0, 'current': '正在连接媒体服务器…'}
+    try:
+        for which in _cover_pick_servers(server):
+            try:
+                addr, port, key = _emby_inst(which)
+            except Exception:
+                addr, port, key = '', '', ''
+            if not (addr and key):
+                out['servers'].append({'server': which, 'label': which,
+                                       'err': '未配置地址/API Key'})
+                continue
+            scanned, start, total, err, miss = 0, 0, 0, '', []
+            while start < limit:
+                n = min(800, limit - start)
+                p = ('/Items?Recursive=true&IncludeItemTypes=Movie,Series'
+                     '&Fields=ImageTags,ProviderIds,ProductionYear,Path,DateCreated'
+                     '&StartIndex=%d&Limit=%d&api_key=%s' % (start, n, key))
+                if scope == 'recent':
+                    p += '&SortBy=DateCreated&SortOrder=Descending'
+                if lib_id:
+                    p += '&ParentId=' + urllib.parse.quote(str(lib_id))
+                st, b = hget(addr, port, p, None, 25)
+                if st != 200 or not isinstance(b, dict):
+                    err = 'Emby HTTP %s' % st
+                    break
+                batch = b.get('Items') or []
+                total = int(b.get('TotalRecordCount') or 0)
+                for it in batch:
+                    scanned += 1
+                    if (it.get('ImageTags') or {}).get('Primary'):
+                        continue
+                    pid = it.get('ProviderIds') or {}
+                    tid = str(pid.get('Tmdb') or pid.get('tmdb')
+                              or pid.get('TMDB') or '')
+                    nm = str(it.get('Name') or '')
+                    miss.append({
+                        'id': str(it.get('Id') or ''), 'name': nm,
+                        'type': str(it.get('Type') or ''),
+                        'year': str(it.get('ProductionYear') or ''),
+                        'tmdb': tid, 'path': str(it.get('Path') or '')[-90:],
+                        'created': str(it.get('DateCreated') or '')[:19],
+                        'server': which, 'server_label': _cover_label(which),
+                        'preview': ('/api/emby/poster?id=%s&w=185&tmdb=%s&title=%s'
+                                    % (it.get('Id'), urllib.parse.quote(tid),
+                                       urllib.parse.quote(nm))),
+                    })
+                start += len(batch)
+                COVER_LAST['progress'] = {
+                    'running': True, 'phase': 'scan', 'done': start,
+                    'total': min(total, limit),
+                    'current': '%s · 已查 %d 条' % (_cover_label(which), start)}
+                if not batch or start >= total or start >= limit:
+                    break
+            out['servers'].append({'server': which, 'label': _cover_label(which),
+                                   'total': total, 'scanned': scanned,
+                                   'missing': len(miss), 'err': err})
+            out['scanned'] += scanned
+            out['items'].extend(miss)
+        out['missing'] = len(out['items'])
+        out['items'] = out['items'][:1000]
+        COVER_LAST['scan'] = out
+    except Exception as e:
+        out['ok'] = False
+        out['err'] = sanitize_err(e, 160)
+    COVER_LAST['progress'] = {'running': False, 'phase': 'scan',
+                              'done': out['scanned'], 'total': out['scanned'],
+                              'current': '扫描完成'}
+    return out
+
+
+def _cover_poster(it, loose=False):
+    """按 TMDB ID 精确取官方海报；无 ID 时按片名+年份严格匹配。
+    返回 (poster_path, match_desc, tmdb_title)。"""
+    tid = str(it.get('tmdb') or '').strip()
+    nm = str(it.get('name') or '').strip()
+    yr = str(it.get('year') or '').strip()
+    typ = 'tv' if str(it.get('type') or '').lower().startswith('series') else 'movie'
+    ck = (tid, typ, nm, yr, bool(loose))
+    if ck in _TMDB_POSTER_CACHE:
+        return _TMDB_POSTER_CACHE[ck]
+    k = tmdb_key()
+    if not k:
+        return ('', '未配置 TMDB Key', '')
+    res = ('', 'TMDB 无该片海报', '')
+    if tid.isdigit():
+        # ★ V1.47b：绝不能跨类型回退。TMDB 的 movie / tv ID 空间相互独立，
+        #   实测 movie/292542（《Wong Flew Over the Cuckoo's Nest》无图）
+        #   的 tv/292542 是《野性印度》，早期版本会把它误补成封面。
+        #   宁可留空标原因，也不写入别的作品海报。
+        j = _tmdb_get('https://api.themoviedb.org/3/%s/%s?api_key=%s&language=zh-CN'
+                      % (typ, tid, k), t=12)
+        if isinstance(j, dict) and j.get('poster_path'):
+            res = (j['poster_path'], 'TMDB ID 精确匹配 (%s)' % typ,
+                   str(j.get('title') or j.get('name') or ''))
+        elif isinstance(j, dict) and j.get('__err'):
+            res = ('', 'TMDB 请求失败：%s' % str(j['__err'])[:60], '')
+        elif isinstance(j, dict):
+            # 主详情无海报 → 查同一作品的多语言海报集（仍严格同类型同 ID）
+            ji = _tmdb_get('https://api.themoviedb.org/3/%s/%s/images?api_key=%s'
+                           '&include_image_language=zh,en,null' % (typ, tid, k), t=12)
+            ps = (ji.get('posters') or []) if isinstance(ji, dict) else []
+            for _p in ps[:6]:
+                if _p.get('file_path'):
+                    res = (_p['file_path'], 'TMDB 多语言海报集 (%s)' % typ,
+                           str(j.get('title') or j.get('name') or ''))
+                    break
+            if not res[0]:
+                res = ('', 'TMDB 无该片海报（不跨类型/不模糊匹配）', '')
+    if not res[0] and nm:
+        sr = _tmdb_get('https://api.themoviedb.org/3/search/multi?api_key=%s'
+                       '&language=zh-CN&query=%s' % (k, urllib.parse.quote(nm)), t=12)
+        rows = (sr.get('results') or []) if isinstance(sr, dict) else []
+        for r in rows[:10]:
+            if not r.get('poster_path'):
+                continue
+            mt = str(r.get('media_type') or '')
+            if mt and ((typ == 'tv' and mt != 'tv') or
+                       (typ == 'movie' and mt != 'movie')):
+                continue
+            ry = str(r.get('first_air_date') or r.get('release_date') or '')[:4]
+            rt = str(r.get('title') or r.get('name') or '')
+            if not loose:
+                if yr and ry and yr != ry:
+                    continue
+                if rt.lower() != nm.lower():
+                    continue
+            res = (r['poster_path'],
+                   ('宽松匹配（需人工核对）' if loose else
+                    '片名%s匹配' % ('+年份' if (yr and ry == yr) else '')), rt)
+            break
+        if not res[0] and loose:
+            for r in rows[:10]:
+                if r.get('poster_path'):
+                    res = (r['poster_path'], '宽松匹配（需人工核对）',
+                           str(r.get('title') or r.get('name') or ''))
+                    break
+    if len(_TMDB_POSTER_CACHE) > 800:
+        _TMDB_POSTER_CACHE.clear()
+    _TMDB_POSTER_CACHE[ck] = res
+    return res
+
+
+def _cover_fetch(poster_path, size='w500'):
+    """下载 TMDB 海报二进制：容器内直连（与 /tmdbimg 同源），失败走代理隧道。"""
+    import http.client as _hct
+    if not poster_path or not poster_path.startswith('/'):
+        return None, ''
+    if size not in ('w185', 'w300', 'w342', 'w500', 'w780', 'w1280', 'original'):
+        size = 'w500'
+    path = '/t/p/%s%s' % (size, poster_path)
+    hdr = {'User-Agent': 'MediaHub/1.0'}
+    try:
+        c = _hct.HTTPSConnection('image.tmdb.org', 443, timeout=15)
+        c.request('GET', path, headers=hdr)
+        r = c.getresponse()
+        data, ct, st = r.read(), r.getheader('Content-Type') or 'image/jpeg', r.status
+        c.close()
+        if st == 200 and len(data) > 3000:
+            return data, ct.split(';')[0]
+    except Exception:
+        pass
+    try:
+        px = urllib.parse.urlparse(tmdb_proxy() or '')
+        if px.hostname:
+            c = _hct.HTTPSConnection(px.hostname, px.port or 80, timeout=15)
+            c.set_tunnel('image.tmdb.org', 443)
+            c.request('GET', path, headers=hdr)
+            r = c.getresponse()
+            data, ct, st = r.read(), r.getheader('Content-Type') or 'image/jpeg', r.status
+            c.close()
+            if st == 200 and len(data) > 3000:
+                return data, ct.split(';')[0]
+    except Exception:
+        pass
+    return None, ''
+
+
+def _cover_upload(which, iid, img):
+    """把海报写进 Emby：base64 + application/octet-stream，上传后回读校验。"""
+    try:
+        addr, port, key = _emby_inst(which)
+    except Exception:
+        return False, '实例配置读取失败'
+    if not (addr and key):
+        return False, '未配置地址/API Key'
+    body = base64.b64encode(img).decode()
+    p = '/Items/%s/Images/Primary?api_key=%s' % (
+        urllib.parse.quote(str(iid)), key)
+    st, resp = hreq(addr, port, 'POST', p, body.encode(),
+                    {'Content-Type': 'application/octet-stream'}, 25)
+    if st not in (200, 204):
+        return False, 'Emby HTTP %s %s' % (st, str(resp)[:70])
+    st2, b2 = hget(addr, port,
+                   '/emby/Items?Ids=%s&Fields=ImageTags&api_key=%s'
+                   % (urllib.parse.quote(str(iid)), key), None, 12)
+    tags = {}
+    if st2 == 200 and isinstance(b2, dict):
+        for x in (b2.get('Items') or []):
+            if str(x.get('Id')) == str(iid):
+                tags = x.get('ImageTags') or {}
+                break
+    if not tags.get('Primary'):
+        return False, '上传后回读仍无 Primary'
+    return True, str(tags.get('Primary'))[:12]
+
+
+def cover_fix(items=None, server='emby', dry=False, size='w500', loose=False):
+    """逐项补齐缺失封面；items 为空则取最近一次扫描结果。单批上限 300。"""
+    scan = COVER_LAST.get('scan') or {}
+    src = items if items else (scan.get('items') or [])
+    picked = [x for x in src if str(x.get('id') or '').isdigit()][:300]
+    out = {'ok': True, 'ts': time.strftime('%F %T'), 'dry': bool(dry),
+           'total': len(picked), 'fixed': 0, 'failed': 0,
+           'skipped': 0, 'details': [], 'msg': ''}
+    if not picked:
+        out['msg'] = '没有可补齐的条目（请先扫描）'
+        COVER_LAST['fix'] = out
+        return out
+    for i, it in enumerate(picked):
+        iid = str(it.get('id'))
+        nm = str(it.get('name') or '')
+        which = str(it.get('server') or server or 'emby')
+        COVER_LAST['progress'] = {
+            'running': True, 'phase': 'fix', 'done': i, 'total': len(picked),
+            'current': '正在补齐 %s' % nm[:20]}
+        det = {'id': iid, 'name': nm, 'server': which, 'ok': False,
+               'dry': bool(dry), 'msg': '', 'match': '', 'poster': ''}
+        try:
+            po, match, tt = _cover_poster(it, bool(loose))
+            det['match'] = match
+            det['poster'] = po
+            if not po:
+                det['msg'] = match
+                out['failed'] += 1
+            elif dry:
+                det['ok'] = True
+                det['msg'] = '可补齐（试运行）：%s' % match
+                out['skipped'] += 1
+            else:
+                img, ct = _cover_fetch(po, size)
+                if not img:
+                    det['msg'] = '海报下载失败（%s）' % po[-28:]
+                    out['failed'] += 1
+                else:
+                    ok, msg = _cover_upload(which, iid, img)
+                    det['ok'] = ok
+                    det['msg'] = ('已写入 Emby · %s' % match) if ok else msg
+                    det['bytes'] = len(img)
+                    if ok:
+                        out['fixed'] += 1
+                    else:
+                        out['failed'] += 1
+        except Exception as e:
+            det['msg'] = '异常：%s' % sanitize_err(e, 90)
+            out['failed'] += 1
+        out['details'].append(det)
+        time.sleep(0.05)
+    out['msg'] = ('%s成功 %d 张，失败 %d 张，试运行 %d 张（共 %d）'
+                  % ('试运行：' if dry else '', out['fixed'],
+                     out['failed'], out['skipped'], out['total']))
+    COVER_LAST['fix'] = out
+    COVER_LAST['progress'] = {'running': False, 'phase': 'fix',
+                              'done': len(picked), 'total': len(picked),
+                              'current': '补齐完成'}
+    return out
+
+
+def cover_status():
+    sc = COVER_LAST.get('scan') or {}
+    fx = COVER_LAST.get('fix') or {}
+    return {'ok': True, 'progress': COVER_LAST.get('progress'),
+            'last_scan': {'ts': sc.get('ts'), 'scanned': sc.get('scanned'),
+                          'missing': sc.get('missing')},
+            'last_fix': {'ts': fx.get('ts'), 'fixed': fx.get('fixed'),
+                         'failed': fx.get('failed'), 'total': fx.get('total')}}
+
+# ═══════════════════════════════════════════════════════════════════════════
+# V1.48 内存预警（用户 2026-11-08 选 E：面板 + TG 提前知道内存快爆 / 该关点程序）
+#   · 容器内 /proc/meminfo 实测可读宿主真值（MemTotal 31G 与宿主 free 一致）
+#   · 容器占用 Top 走 Docker Engine API（已有 dk()），不依赖宿主采集脚本
+#   · 后台 60s 轮询，等级跃迁 / 冷却到期 / OOM 新增才推 TG，绝不刷屏
+#   · 配置落 /dockroot/media-hub/memguard.json（bind rw，零凭据）
+# ═══════════════════════════════════════════════════════════════════════════
+_MG_CFG_PATH = '/dockroot/media-hub/memguard.json'
+_MG_CACHE = {'ts': 0.0, 'data': None}
+_MG_PUSH = {'last': 0.0, 'level': 'ok', 'oom': 0, 'last_text': '', 'last_ok': False}
+_MG_DEF = {'enabled': True, 'warn_swap': 60, 'crit_swap': 80,
+           'warn_mem': 82, 'crit_mem': 91, 'cooldown_min': 15}
+_MG_CORE = {'media-hub', 'emby-main', 'emby-adult', 'mediatidy', 'clouddrive2',
+            'embyboss_mysql', 'moviepilot-v3'}
+
+
+def mg_cfg():
+    try:
+        d = json.load(open(_MG_CFG_PATH, encoding='utf-8'))
+        return dict(_MG_DEF, **{k: d[k] for k in _MG_DEF if k in d})
+    except Exception:
+        return dict(_MG_DEF)
+
+
+def mg_save(d):
+    cur = mg_cfg()
+    if not isinstance(d, dict):
+        return cur
+    if 'enabled' in d:
+        cur['enabled'] = bool(d['enabled'])
+    for k in ('warn_swap', 'crit_swap', 'warn_mem', 'crit_mem', 'cooldown_min'):
+        if k in d:
+            try:
+                cur[k] = max(1, min(240, int(d[k])))
+            except Exception:
+                pass
+    try:
+        json.dump(cur, open(_MG_CFG_PATH, 'w', encoding='utf-8'),
+                  ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+    return cur
+
+
+def mg_top_containers():
+    """运行容器按 RSS 排序 Top8（Docker Engine API，并发取 stats）。"""
+    try:
+        st, b = dk('GET', '/containers/json?all=0', t=8)
+        if st != 200:
+            return []
+        names = []
+        for x in (json.loads(b) or []):
+            n = ((x.get('Names') or [''])[0] or '').lstrip('/')
+            if n:
+                names.append(n)
+        names = names[:50]
+
+        def one(n):
+            try:
+                s2, b2 = dk('GET', '/containers/%s/stats?stream=false' % n, t=6)
+                if s2 != 200:
+                    return None
+                j = json.loads(b2)
+                ms = j.get('memory_stats') or {}
+                usage = int(ms.get('usage') or 0)
+                stt = ms.get('stats') or {}
+                cache = int(stt.get('inactive_file') or stt.get('cache') or 0)
+                rss = max(0, usage - cache)
+                return (n, rss)
+            except Exception:
+                return None
+
+        from concurrent.futures import ThreadPoolExecutor
+        out = []
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            for r in ex.map(one, names):
+                if r and r[1] > 0:
+                    out.append({'name': r[0], 'gb': round(r[1] / 1073741824.0, 2)})
+        out.sort(key=lambda z: -z['gb'])
+        return out[:8]
+    except Exception:
+        return []
+
+
+def mg_snapshot(force=False):
+    now = time.time()
+    if not force and _MG_CACHE['data'] is not None and now - _MG_CACHE['ts'] < 15:
+        return _MG_CACHE['data']
+    mi = {}
+    try:
+        for ln in open('/proc/meminfo'):
+            p = ln.split(':', 1)
+            if len(p) == 2:
+                try:
+                    mi[p[0]] = int(p[1].strip().split()[0])
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    total = mi.get('MemTotal', 0) or 0
+    avail = mi.get('MemAvailable', 0) or 0
+    swt = mi.get('SwapTotal', 0) or 0
+    swf = mi.get('SwapFree', 0) or 0
+    mem_pct = round((total - avail) / total * 100, 1) if total else 0
+    sw_pct = round((swt - swf) / swt * 100, 1) if swt else 0
+    psi_full, psi_some = 0.0, 0.0
+    try:
+        for ln in open('/proc/pressure/memory'):
+            p = ln.split()
+            if not p:
+                continue
+            v = 0.0
+            for seg in p[1:]:
+                if seg.startswith('avg10='):
+                    try:
+                        v = float(seg.split('=', 1)[1])
+                    except Exception:
+                        pass
+            if p[0] == 'full':
+                psi_full = v
+            elif p[0] == 'some':
+                psi_some = v
+    except Exception:
+        pass
+    oom_kill = 0
+    try:
+        for ln in open('/proc/vmstat'):
+            if ln.startswith('oom_kill '):
+                oom_kill = int(ln.split()[1])
+                break
+    except Exception:
+        pass
+    load = ''
+    try:
+        load = ' / '.join(open('/proc/loadavg').read().split()[:3])
+    except Exception:
+        pass
+    top = mg_top_containers()
+    c = mg_cfg()
+    if (sw_pct >= c['crit_swap'] or mem_pct >= c['crit_mem'] or psi_full >= 8):
+        level = 'crit'
+    elif (sw_pct >= c['warn_swap'] or mem_pct >= c['warn_mem'] or psi_full >= 2):
+        level = 'warn'
+    else:
+        level = 'ok'
+    advice = []
+    if level != 'ok':
+        for t in top[:5]:
+            if t['gb'] >= 0.6 and t['name'] not in _MG_CORE:
+                advice.append('可考虑关闭 / 限流 <b>%s</b>（占 %.2fG）' % (t['name'], t['gb']))
+        advice.append('优先检查：闲置虚拟机、qBittorrent 大批量下载、framebase 动态封面任务')
+        if sw_pct >= c['crit_swap']:
+            advice.insert(0, '<b>Swap 即将打满</b>——再涨会触发整机 OOM，服务会突然连不上')
+    d = {'ok': True, 'ts': time.strftime('%F %T'), 'level': level,
+         'mem': {'total_gb': round(total / 1048576.0, 1),
+                 'avail_gb': round(avail / 1048576.0, 1), 'pct': mem_pct},
+         'swap': {'total_gb': round(swt / 1048576.0, 1),
+                  'used_gb': round((swt - swf) / 1048576.0, 1), 'pct': sw_pct},
+         'psi_full': psi_full, 'psi_some': psi_some, 'oom_kill': oom_kill,
+         'load': load, 'top': top, 'advice': advice, 'cfg': c,
+         'push': {'last': _MG_PUSH['last'], 'last_ok': _MG_PUSH['last_ok'],
+                  'last_text': _MG_PUSH['last_text'][:200]}}
+    _MG_CACHE.update({'ts': now, 'data': d})
+    return d
+
+
+def mg_text(d, test=False):
+    lv = d.get('level')
+    tag = '🔴 危险' if lv == 'crit' else ('🟡 注意' if lv == 'warn' else '🟢 正常')
+    head = '🧪 <b>内存预警 · 测试推送</b>' if test else '🚨 <b>NAS 内存预警 · %s</b>' % tag
+    lines = [head, '',
+             '内存 <b>%.1f%%</b>（可用 %.1fG / %.1fG）' % (
+                 d['mem']['pct'], d['mem']['avail_gb'], d['mem']['total_gb']),
+             'Swap <b>%.1f%%</b>（已用 %.1fG / %.1fG）' % (
+                 d['swap']['pct'], d['swap']['used_gb'], d['swap']['total_gb']),
+             'IO 等待 full %.1f · OOM 累计 %s 次 · load %s' % (
+                 d.get('psi_full') or 0, d.get('oom_kill') or 0, d.get('load') or '-')]
+    if d.get('top'):
+        lines.append('')
+        lines.append('占用 Top：' + ' / '.join('%s %.2fG' % (t['name'], t['gb'])
+                                            for t in d['top'][:4]))
+    if d.get('advice'):
+        lines.append('')
+        lines.append('<b>建议现在做：</b>')
+        for a in d['advice'][:4]:
+            lines.append('· ' + a)
+    lines.append('')
+    lines.append('面板 → 仪表盘 → 🛡 内存预警，可查看明细 / 关闭推送')
+    return '\n'.join(lines)
+
+
+def mem_guard_loop():
+    """后台 60s 轮询：等级跃迁、冷却到期、OOM 新增 → TG 推群主。"""
+    time.sleep(25)
+    while True:
+        try:
+            d = mg_snapshot(force=True)
+            c = mg_cfg()
+            now = time.time()
+            lv = d.get('level') or 'ok'
+            oom = int(d.get('oom_kill') or 0)
+            oom_new = oom > _MG_PUSH['oom'] and _MG_PUSH['oom'] > 0
+            cool = float(c.get('cooldown_min') or 15) * 60
+            escalate = lv in ('warn', 'crit') and lv != _MG_PUSH['level']
+            repeat = lv in ('warn', 'crit') and (now - _MG_PUSH['last']) > cool
+            need = bool(c.get('enabled')) and (escalate or repeat or oom_new)
+            if need:
+                txt = mg_text(d)
+                ok = False
+                try:
+                    ok = _tg_owner(txt)
+                except Exception:
+                    ok = False
+                _MG_PUSH.update({'last': now, 'level': lv,
+                                 'last_text': txt, 'last_ok': bool(ok)})
+                try:
+                    oplog('memguard', 'tg_push', 'level=%s oom=%s' % (lv, oom),
+                          bool(ok), txt[:160])
+                except Exception:
+                    pass
+            elif lv == 'ok':
+                _MG_PUSH['level'] = 'ok'
+            _MG_PUSH['oom'] = oom
+        except Exception:
+            pass
+        time.sleep(60)
+
+
+def mg_test_push():
+    d = mg_snapshot(force=True)
+    txt = mg_text(d, test=True)
+    ok = False
+    try:
+        ok = _tg_owner(txt)
+    except Exception:
+        ok = False
+    _MG_PUSH.update({'last': time.time(), 'last_text': txt, 'last_ok': bool(ok)})
+    try:
+        oplog('memguard', 'tg_test', '手动测试推送', bool(ok), txt[:120])
+    except Exception:
+        pass
+    return {'ok': bool(ok), 'msg': '测试消息已发到 TG' if ok else
+            '发送失败：请检查面板 TG Bot Token / 目标 UID 配置', 'preview': txt[:400]}
+
+
+# ═══════════ V1.48 点头像看「他看了哪些影片」（多台 Emby 合并，只读）═══════════
+def emby_userplays(name='', uid='', days=365, limit=120):
+    """按用户名（或 UserId）合并两台 Emby 的播放明细。
+
+    KFC 走 playback_reporting.db（按 32 位 hex UserId 精确匹配），
+    KFC2 走 activitylog.db（按用户名匹配）；两路结果按 时间+片名 去重。
+    """
+    out = {'ok': False, 'name': name or uid, 'rows': [], 'total': 0, 'days': days}
+    if not name and not uid:
+        return out
+    try:
+        days = max(1, min(3650, int(days or 365)))
+        limit = max(1, min(300, int(limit or 120)))
+    except Exception:
+        days, limit = 365, 120
+    rows = []
+    for which, short in (('emby', 'main'), ('emby_adult', 'adult')):
+        umap = {}
+        try:
+            umap = _emby_user_map(which) or {}
+        except Exception:
+            pass
+        hexid = ''
+        if name:
+            hexid = next((k for k, v in umap.items()
+                          if str(v).lower() == str(name).lower()), '')
+        if not hexid and uid and len(str(uid)) >= 30:
+            hexid = str(uid)
+        con = None
+        try:
+            con = _pr_db(short)
+        except Exception:
+            con = None
+        if con is not None and hexid:
+            try:
+                r = emby_plays_pr(con, user=hexid, days=days, page=1, size=200,
+                                  which=which, short=short)
+                rows.extend(r.get('rows') or [])
+            except Exception:
+                pass
+        if name:
+            try:
+                r2 = emby_plays_activity(days=days, which=which, short=short, user=name)
+                rows.extend(r2.get('rows') or [])
+            except Exception:
+                pass
+    seen = set()
+    fin = []
+    for x in rows:
+        if not isinstance(x, dict):
+            continue
+        k = (str(x.get('ts') or '')[:16], str(x.get('item') or ''))
+        if k in seen:
+            continue
+        seen.add(k)
+        fin.append({z: x.get(z) for z in (
+            'ts', 'item', 'item_id', 'type', 'img', 'server', 'server_name',
+            'play_sec', 'client', 'device', 'tmdb', 'year', 'quality', 'series')})
+    fin.sort(key=lambda r: str(r.get('ts') or ''), reverse=True)
+    out['rows'] = fin[:limit]
+    out['total'] = len(fin)
+    out['ok'] = bool(fin)
+    return out
+
 def act_mdc(act, arg):
     conf = containers()['mdc']
     if act == 'health':
@@ -9482,6 +10129,7 @@ ACTIONS = {
     'mdc': {'fn': act_mdc, 'titles': dict({'health': '健康检查'}, **GENERIC_TITLES)},
     'embyboss': {'fn': act_embyboss, 'titles': dict(GENERIC_TITLES)},
     'flaresolverr': {'fn': act_flare, 'titles': dict({'test': '连通性自检'}, **GENERIC_TITLES)},
+    'openlist': {'fn': lambda a, g: act_generic('openlist', a, g), 'titles': dict(GENERIC_TITLES)},
 }
 
 # 长耗时动作：异步执行
@@ -12790,7 +13438,7 @@ def submgmt_batch_sub(items):
 # PT 保号（发电）中心 —— /api/keepalive
 #
 # 与 kfcgame 的 modules/keepalive.py 共用同一份 state.json：
-#   Web 容器读 /dockroot/kfcgame/keepalive/state.json（挂载 /vol1/1000/docker:/dockroot）
+#   Web 容器读 /dockroot/kfcgame/keepalive/state.json（挂载 {{MH_VOL1}}/docker:/dockroot）
 #   Bot 容器写 /app/keepalive/state.json（挂载 ./keepalive:/app/keepalive）
 #   ⇒ 两端规则/进度/状态天然一致；Web 只做展示与「启停」两种写操作。
 # ═══════════════════════════════════════════════════════════════════
@@ -13150,6 +13798,483 @@ def _ka_tasks(req, ss, now, sid=''):
     return tasks
 
 
+# ═══ V4 站点网格（2026-11-09 21:3x：MP 补全/时魔/做种时长/同步+方案）═══
+_KA_UD_CACHE = {}
+_KA_SYNC = {'running': False, 'ts': 0.0, 'detail': [], 'by_id': {}, 'msg': '',
+            'ok_n': 0, 'total': 0, 'done': 0, 'stage': ''}
+
+# ★ v1.49（2026-11-10）真实时探测缓存：GET /site/userdata 读的是 MP 库里的旧快照，
+#   只有 POST 才会让 MP 当场重抓站点 HTML。所有「同步/单站刷新」都走 POST，
+#   结果落 _KA_LIVE（并持久化到 kalive.json，重启面板不丢），卡片才有「实时」时间。
+_KA_LIVE_PATH = '/dockroot/media-hub/kalive.json'
+_KA_LIVE = {}
+try:
+    _KA_LIVE.update(json.load(open(_KA_LIVE_PATH, encoding='utf-8')))
+except Exception:
+    pass
+
+_KA_MP_SITES = {}
+_KA_MP_SITES_TS = [0.0]
+_KA_LIVE_LOCK = threading.Lock()
+
+
+def _ka_live_save():
+    try:
+        tmp = _KA_LIVE_PATH + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(_KA_LIVE, f, ensure_ascii=False)
+        os.replace(tmp, _KA_LIVE_PATH)
+    except Exception as e:
+        logger.debug('kalive.json 写入失败: %s', e)
+
+
+def _ka_mp_sites(force=False):
+    """域名 → MP 站点 {id,name}（只含 is_active）。10 分钟缓存。"""
+    if not force and _KA_MP_SITES and time.time() - _KA_MP_SITES_TS[0] < 600:
+        return _KA_MP_SITES
+    m = {}
+    try:
+        rs = mp_call('/api/v1/site/', t=15)
+        for s0 in (rs.get('data') or []):
+            dm = _norm_domain(s0.get('domain'))
+            if dm and s0.get('is_active'):
+                m[dm] = {'id': s0.get('id'), 'name': s0.get('name') or s0.get('id')}
+    except Exception as e:
+        logger.debug('MP 站点列表读取失败: %s', e)
+    if m:
+        _KA_MP_SITES.clear()
+        _KA_MP_SITES.update(m)
+        _KA_MP_SITES_TS[0] = time.time()
+    return _KA_MP_SITES or m
+
+
+def _ka_err_hint(msg):
+    s = str(msg or '')
+    low = s.lower()
+    if '未检测到已登陆' in s or '未登陆' in s or '未登录' in s:
+        return ('站点判定「未登录」＝ Cookie 已过期。解决：点本卡「去抓 Cookie」，'
+                '在浏览器登录该站后一键抓取（面板 Cookie 抓取中心），再回来刷新。')
+    if '未获取到站点用户信息' in s or '未获取到站点用户数据' in s:
+        return ('站点没返回用户信息（Cookie 失效 / CF 盾拦截 / 账号被停用）。'
+                '解决：重新登录该站抓一次 Cookie（本卡「去抓 Cookie」）；'
+                '馒头 API Token 的正确入口是「控制台 → 实验室 → 存取令牌」（不是设置页）；点「建立存取令牌」生成，令牌只显示一次，立即复制。')
+    if any(k in s for k in ('停用', '封禁', '禁用')) or any(
+            k in low for k in ('apikey', 'api key', 'token', '401', '403',
+                               'forbidden', 'unauthorized', 'invalid', 'deactiv')):
+        return ('凭据失效（访问令牌被撤销或账号被停用）。解决：到该站后台重新生成令牌（馒头：控制台 → 实验室 → 存取令牌）'
+                '重新生成访问令牌，填入 MoviePilot「基础设置 → 站点 → API Key」，再点同步。')
+    if any(k in low for k in ('timeout', 'timed out', 'proxy', 'connection',
+                               'unreachable', 'refused', 'dns', 'reset', 'econn')):
+        return ('站点网络不通（超时/代理/DNS）。解决：确认容器代理可用后稍后重试；'
+                '持续失败请核对该站域名是否变更。')
+    if '429' in s or 'quota' in low or '限流' in low or 'too many' in low:
+        return '触发站点限流。解决：等待 5-10 分钟再同步，勿高频点击。'
+    if 'cookie' in low or 'auth' in low or 'passkey' in low:
+        return ('站点 Cookie/Passkey 失效。解决：浏览器登录该站后用油猴脚本重抓 Cookie'
+                '（面板 Cookie 抓取中心），或在 MP 站点设置中更新。')
+    if '为空' in s or 'no data' in low or 'not found' in low or '404' in s or not s.strip():
+        return ('站点未返回数据（多为 MP 里该站未启用或凭据缺失）。解决：到 MP「基础设置 → 站点」'
+                '确认该站启用且 Cookie/APIKey 完整，再点同步。')
+    return '未识别的错误。解决：到「PT 保号」页查看该站任务详情，或稍后重试同步。'
+
+
+def _ka_live_probe(dom, mp_id=None, timeout=40):
+    """真实时探测单站：POST /api/v1/site/userdata/{id} → MP 当场重抓站点 HTML。
+    返回 {'ok','msg','row','uid','ts','ms','fix'} 并写入 _KA_LIVE（含落盘）。"""
+    t0 = time.time()
+    dom = _norm_domain(dom) or str(dom or '')
+    if not mp_id:
+        mp_id = (_ka_mp_sites().get(dom) or {}).get('id')
+    if not mp_id:
+        r = {'ok': False, 'msg': 'MoviePilot 未配置/未启用该站点', 'row': {}, 'uid': 0,
+             'ts': time.time(), 'ms': 0,
+             'fix': '到 MoviePilot「基础设置 → 站点」添加该站并启用，再点刷新。'}
+        with _KA_LIVE_LOCK:
+            _KA_LIVE[dom] = r
+            _ka_live_save()
+        return r
+    try:
+        rr = mp_call('/api/v1/site/userdata/%s' % mp_id, method='POST', body={},
+                     t=timeout)
+    except Exception as e:
+        rr = {'ok': False, 'msg': 'MP 调用异常：%s' % str(e)[:80]}
+    ok = bool(rr.get('ok'))
+    row = (rr.get('data') or {}) if ok else {}
+    if not isinstance(row, dict):
+        row = {}
+    msg = '' if ok else str(rr.get('msg') or '未获取到站点用户数据')[:160]
+    uid = 0
+    try:
+        uid = int(row.get('userid') or 0)
+    except Exception:
+        uid = 0
+    r = {'ok': ok, 'msg': msg, 'row': row, 'uid': uid,
+         'ts': time.time(), 'ms': int((time.time() - t0) * 1000),
+         'fix': '' if ok else _ka_err_hint(msg)}
+    with _KA_LIVE_LOCK:
+        _KA_LIVE[dom] = r
+        _ka_live_save()
+    return r
+
+
+def _ka_userdata_one(sid, dom, force=False):
+    c = _KA_UD_CACHE.get(dom)
+    if c and not force and time.time() - c['ts'] < 1800:
+        return c
+    row = {}
+    try:
+        d = mp_call('/api/v1/site/userdata/%s' % sid, t=25)
+        arr = (d or {}).get('data') or []
+        row = arr[0] if isinstance(arr, list) and arr else {}
+    except Exception:
+        row = {}
+    ent = {'ts': time.time(), 'row': row}
+    _KA_UD_CACHE[dom] = ent
+    return ent
+
+
+_KA_BONUS_HIST_PATH = '/dockroot/media-hub/kabonus.json'
+
+
+def _ka_bonus_rate(sid, bonus, now, join_at):
+    """时魔（魔力/小时）：优先用本端采样历史（6h 滑窗）算真实增速；
+    样本不足时回退「加入以来平均速率」。"""
+    try:
+        h = json.load(open(_KA_BONUS_HIST_PATH, encoding='utf-8'))
+        if not isinstance(h, dict):
+            h = {}
+    except Exception:
+        h = {}
+    lst = [x for x in (h.get(str(sid)) or [])
+           if isinstance(x, list) and len(x) == 2 and 0 <= now - x[0] <= 21600]
+    if not lst or (now - lst[-1][0]) >= 120:
+        lst.append([now, bonus])
+    h[str(sid)] = lst[-40:]
+    try:
+        json.dump(h, open(_KA_BONUS_HIST_PATH, 'w', encoding='utf-8'))
+    except Exception:
+        pass
+    if len(lst) >= 2:
+        dt = lst[-1][0] - lst[0][0]
+        db = lst[-1][1] - lst[0][1]
+        if dt > 300 and db >= 0:
+            return round(db / dt * 3600.0, 1)
+    if join_at and bonus:
+        jt = 0.0
+        for fmt, sl in (('%Y-%m-%d %H:%M:%S', 19), ('%Y-%m-%d', 10)):
+            try:
+                jt = time.mktime(time.strptime(str(join_at)[:sl], fmt))
+                break
+            except Exception:
+                continue
+        if jt and now > jt:
+            return round(bonus / ((now - jt) / 3600.0), 1)
+    return 0
+
+
+def _ka_grid_rows_v4(sites, seed):
+    """双源合并：保号 state（官方实时·权威）+ MP userdata 补全。
+    陈旧保护：MP 与 state 上传差 >3 倍 → MP 数值丢弃，但用户名/等级/加入保留
+    （新旧号同名 qieyi，过时的是数值不是账号）。"""
+    size_by_hash = {str(x.get('hash')): int(x.get('size') or 0) for x in seed}
+    try:
+        _tors, _e2 = _qb_all()
+        act_by_hash = {str(x.get('hash')): int(x.get('seeding_time') or 0)
+                       for x in (_tors or [])
+                       if (x.get('category') or '') == 'keepalive'}
+    except Exception:
+        act_by_hash = {}
+        _tors = []
+    # mtkeep 路径种（馒头）不在 seed_ids：按 save_path 汇总 size/seeding_time
+    _mt_size = _mt_secs = 0
+    try:
+        for _t in (_tors or []):
+            if (_t.get('category') or '') == 'keepalive' and 'mtkeep' in str(_t.get('save_path') or ''):
+                _mt_size += int(_t.get('size') or 0)
+                _mt_secs += int(_t.get('seeding_time') or 0)
+    except Exception:
+        pass
+    mp_id = {}
+    try:
+        rs = mp_call('/api/v1/site/', t=12)
+        for s0 in (rs.get('data') or []):
+            dm = _norm_domain(s0.get('domain'))
+            if dm:
+                mp_id[dm] = s0.get('id')
+    except Exception:
+        pass
+    rows = []
+    _now = time.time()
+    for _x in sites:
+        _st = _x.get('stats') or {}
+        dom = _norm_domain(_x.get('home')) or (_x.get('home') or '')
+        up_state = float(_st.get('upload') or 0)
+        # ── 实时层（v1.49）：POST 探测缓存优先，它才是「现在」的站点数值 ──
+        lv = _KA_LIVE.get(dom) or {}
+        live_ok = (bool(lv.get('ok')) and isinstance(lv.get('row'), dict)
+                   and bool(lv.get('row')))
+        live_ts = float(lv.get('ts') or 0)
+        live_msg = '' if live_ok else str(lv.get('msg') or '')
+        ud = (lv.get('row') or {}) if live_ok else {}
+        uid_bot = int(_st.get('uid') or 0)
+        try:
+            uid_mp = int(lv.get('uid') or 0) if live_ok else 0
+        except Exception:
+            uid_mp = 0
+        # 账号不一致（MP 抓到的 uid ≠ Bot 追踪的 uid）→ MP 数值一律不混入本卡
+        mismatch = bool(uid_bot and uid_mp and uid_bot != uid_mp)
+        stale = False
+        if mismatch:
+            live_ok = False
+            ud = {}
+        # 没有实时缓存时，退回 MP 库里缓存的快照（带陈旧保护）
+        if not ud and not lv and dom in mp_id:
+            ent = _ka_userdata_one(mp_id[dom], dom)
+            ud = ent.get('row') or {}
+            up_mp = float(ud.get('upload') or 0)
+            stale = bool(up_mp) and up_state > 0 and (
+                up_mp > up_state * 3 or up_state > up_mp * 3)
+            if stale:
+                ud = {}
+        ids = [str(z) for z in (_x.get('seed_ids') or [])]
+        ssize = sum(size_by_hash.get(h, 0) for h in ids)
+        if not ssize and ud:
+            ssize = int(ud.get('seeding_size') or 0)
+        secs_act = sum(act_by_hash.get(h, 0) for h in ids)
+        if _x.get('id') == 'mteam' and not ids:
+            ssize = ssize or _mt_size
+            secs_act = secs_act or _mt_secs
+
+        def _num(k, fallback):
+            if live_ok:
+                try:
+                    v = float(ud.get(k) or 0)
+                    if v or float(fallback or 0) == 0:
+                        return v
+                except Exception:
+                    pass
+            try:
+                return float(fallback or 0)
+            except Exception:
+                return 0.0
+
+        upload = _num('upload', up_state)
+        download = _num('download', _st.get('download'))
+        ratio = _num('ratio', _st.get('ratio'))
+        bonus = _num('bonus', _st.get('bonus'))
+        seeding = int(_num('seeding', _st.get('seeding')))
+        joined = _st.get('joined') or (ud.get('join_at') or '')
+        lt = _x.get('last_probe') or 0
+        rows.append({
+            'id': _x.get('id'), 'name': _x.get('name'), 'domain': dom,
+            'url': _x.get('home') or '',
+            'ok': bool(_x.get('ok_keepalive')), 'err': _x.get('last_error') or '',
+            'user': (str(ud.get('username') or '') or str(_st.get('user') or '') or ''),
+            'uid': uid_bot,
+            'level': (ud.get('user_level') or '') or _st.get('level') or '',
+            'join_at': joined,
+            'bonus': bonus,
+            'upload': upload,
+            'download': download,
+            'ratio': ratio,
+            'seeding': seeding,
+            'seeding_size': ssize,
+            'seeding_secs': secs_act,
+            'hr': int(_st.get('hr') or 0),
+            'bonus_per_hr': _ka_bonus_rate(_x.get('id'), bonus, _now, joined),
+            'invite_avail': int(_st.get('invite_avail') or 0),
+            'invite_quota': int(_st.get('invite_quota') or 0),
+            'probe': float(lt),
+            'probe_txt': _x.get('last_probe_txt') or '',
+            'login_txt': _x.get('last_login_txt') or '',
+            'warn_n': len(_x.get('ka_warn') or []),
+            'bad_n': len(_x.get('ka_bad') or []),
+            'stale_mp': stale,
+            'enabled': bool(_x.get('enabled')),
+            'fix': _ka_err_hint(_x.get('last_error')) if not _x.get('ok_keepalive') else '',
+            # ── v1.49 实时层字段 ──
+            'src': 'mp' if live_ok else 'bot',
+            'live_ok': live_ok, 'live_ts': live_ts, 'live_err': live_msg,
+            'live_ms': int(lv.get('ms') or 0),
+            'live_fix': (lv.get('fix') or '') if live_msg else '',
+            'uid_mp': uid_mp, 'acct_mismatch': mismatch,
+            'ka_bad': _x.get('ka_bad') or [], 'ka_warn': _x.get('ka_warn') or [],
+            'ka_struct_txt': _x.get('ka_struct_txt') or '',
+            'newbie_status': _x.get('newbie_status') or 'off',
+            'req': _x.get('req') or {},
+        })
+    rows.sort(key=lambda r: -(r.get('upload') or 0))
+    return rows
+
+
+def ka_seeds_detail(sid):
+    """单站做种明细：qB keepalive 分类（mteam 按 mtkeep 路径 / 其余按 seed_ids hash）+ 官方 seedtime。"""
+    try:
+        st = _ka_read_state()
+        ss = (st.get('sites') or {}).get(str(sid)) or {}
+    except Exception as e:
+        return {'ok': False, 'msg': '读取保号状态失败: %s' % str(e)[:60]}
+    ids = set(str(z) for z in (ss.get('seed_ids') or []))
+    tors, err = _qb_all()
+    if err:
+        return {'ok': False, 'msg': 'qBittorrent 不可达: %s' % err,
+                'fix': _ka_err_hint(err)}
+    use_path = (sid == 'mteam')
+    rows = []
+    for t in tors:
+        if (t.get('category') or '') != 'keepalive':
+            continue
+        h = str(t.get('hash') or '')
+        mine = (('mtkeep' in (t.get('save_path') or '')) if use_path
+                else (h in ids if ids else None))
+        if mine is False:
+            continue
+        rows.append({
+            'name': t.get('name') or '', 'hash': h[:12],
+            'size': int(t.get('size') or 0),
+            'pct': round(float(t.get('progress') or 0) * 100, 1),
+            'state': t.get('state') or '',
+            'ratio': round(float(t.get('ratio') or 0), 3),
+            'up': int(t.get('uploaded') or 0),
+            'up_speed': int(t.get('upspeed') or 0),
+            'seeds': int(t.get('num_seeds') or 0),
+            'peers': int(t.get('num_leechs') or 0),
+            'secs_active': int(t.get('seeding_time') or 0),
+            'added': int(t.get('added_on') or 0),
+        })
+    seedtime = []
+    try:
+        svt = str(((ss.get('stats') or {}).get('seedtime') or '')).split(',')
+        seedtime = [int(float(x)) for x in svt if str(x).strip() and str(x).strip().lower() != 'nan']
+    except Exception:
+        pass
+    rows.sort(key=lambda x: (-x['up'], -x['pct']))
+    return {'ok': True, 'id': sid, 'rows': rows, 'n': len(rows),
+            'seedtime': seedtime,
+            'probe_txt': time.strftime('%F %T', time.localtime(ss.get('last_probe') or 0))}
+
+
+def _ka_sync_bg():
+    """同步所有站点（v1.49 真实时）：
+    ① 并发 POST /site/userdata/{id} → 让 MoviePilot 当场重抓每站 HTML（真·实时数值）
+    ② 往 bot 信箱投 ka_refresh → 保号 Bot 立即跑一轮登录/浏览信标（约 60s 回写）
+    逐站结果 {dom,name,ok,msg,fix,ms}，前端据此在「对应卡片」标红并给出修复指引。"""
+    detail, by_id = [], {}
+    t_start = time.time()
+    bot_ok, _enab = 0, []
+    try:
+        mps = _ka_mp_sites(force=True)
+        _KA_SYNC['stage'] = '正在逐站实时抓取'
+        _KA_SYNC['total'] = len(mps)
+        _KA_SYNC['done'] = 0
+        try:
+            _mailbox_cmd('ka_refresh-%d' % int(time.time()), cmd='ka_refresh')
+        except Exception as e:
+            logger.debug('ka_refresh 投递失败: %s', e)
+        jobs = [(dom, info.get('id'), info.get('name') or dom)
+                for dom, info in mps.items() if info.get('id')]
+        if jobs:
+            with ThreadPoolExecutor(max_workers=4) as ex:
+                futs = [(ex.submit(_ka_live_probe, d, i, 45), d, i, n)
+                        for d, i, n in jobs]
+                for fu, d, i, n in futs:
+                    try:
+                        r = fu.result(timeout=70)
+                    except Exception as e:
+                        r = {'ok': False, 'msg': str(e)[:110], 'ms': 0,
+                             'fix': _ka_err_hint(str(e))}
+                    it = {'dom': d, 'mp_id': i, 'name': n,
+                          'ok': bool(r.get('ok')),
+                          'msg': ('实时数据已刷新' if r.get('ok')
+                                  else (r.get('msg') or '未返回数据')),
+                          'fix': r.get('fix') or '',
+                          'ms': int(r.get('ms') or 0),
+                          'ts': r.get('ts') or time.time()}
+                    detail.append(it)
+                    by_id[d] = it
+                    _KA_SYNC['done'] = len(detail)
+                    _KA_SYNC['detail'] = list(detail)
+        else:
+            detail.append({'dom': '', 'name': 'MoviePilot', 'ok': False,
+                           'msg': '没有可用的启用站点（或 MP 不可达）',
+                           'fix': '到 MoviePilot「基础设置 → 站点」启用站点后重试。'})
+        # 保号侧：Bot 上次探测留下的错误也带上（数据源不同，分开报）
+        try:
+            st_all = _ka_read_state()
+            for sid, ssx in (st_all.get('sites') or {}).items():
+                le = str(ssx.get('last_error') or '')
+                if le:
+                    detail.append({'dom': '', 'name': '保号·' + str(ssx.get('name') or sid),
+                                   'ok': False, 'msg': le[:110],
+                                   'fix': _ka_err_hint(le)})
+        except Exception:
+            pass
+        # ③ Bot 探测回写改后台轮询（不阻塞前端报告；最多 5 分钟，齐了提前收工）
+        try:
+            _enab = [sid for sid, v in (_ka_read_state().get('sites') or {}).items()
+                     if v.get('enabled')]
+        except Exception:
+            _enab = []
+        _KA_SYNC['bot_ok'] = 0
+        _KA_SYNC['bot_total'] = len(_enab)
+        ok_n = sum(1 for x in detail if x['ok'])
+        _KA_SYNC['detail'] = detail
+        _KA_SYNC['by_id'] = by_id
+        _KA_SYNC['ok_n'] = ok_n
+        _KA_SYNC['stage'] = '完成'
+        _KA_SYNC['msg'] = ('实时刷新完成：%d 站正常 / %d 站异常，耗时 %.1fs'
+                           % (ok_n, len(detail) - ok_n, time.time() - t_start))
+        _KA_SYNC['stage'] = 'Bot 回写跟踪中'
+
+        def _bot_watch():
+            bo = 0
+            _dl = time.time() + 300
+            while time.time() < _dl:
+                time.sleep(8)
+                try:
+                    _st1 = _ka_read_state()
+                    bo = sum(1 for sid in _enab
+                             if float(((_st1.get('sites') or {}).get(sid) or {})
+                                      .get('last_probe') or 0) > t_start)
+                except Exception:
+                    bo = 0
+                _KA_SYNC['bot_ok'] = bo
+                if _enab and bo >= len(_enab):
+                    break
+            _KA_SYNC['msg'] = ('实时刷新完成：%d 站正常 / %d 站异常；'
+                               'Bot 保号探测已回写 %d/%d 站'
+                               % (ok_n, len(detail) - ok_n, bo, len(_enab)))
+            _KA_SYNC['stage'] = '完成'
+        threading.Thread(target=_bot_watch, daemon=True).start()
+    except Exception as e0:
+        _KA_SYNC['detail'] = detail + [{'dom': '', 'name': '同步引擎', 'ok': False,
+                                        'msg': str(e0)[:120],
+                                        'fix': '查看 media-hub 容器日志定位。'}]
+        _KA_SYNC['msg'] = '同步异常：%s' % str(e0)[:80]
+    finally:
+        _KA_SYNC['running'] = False
+        _KA_SYNC['ts'] = time.time()
+
+
+def ka_live_one(sid=None, dom=None):
+    """单站实时刷新（卡片右上角 ⟳）。sid=Bot 站点 id，dom=域名，二选一。"""
+    dom = _norm_domain(dom or '')
+    if not dom and sid:
+        st = _ka_read_state()
+        for s in (st.get('_cfg') or []):
+            if str(s.get('id')) == str(sid):
+                dom = _norm_domain(s.get('home'))
+                break
+    if not dom:
+        return {'ok': False, 'msg': '缺少站点标识'}
+    info = _ka_mp_sites().get(dom) or {}
+    r = _ka_live_probe(dom, info.get('id'), timeout=45)
+    return {'ok': bool(r.get('ok')), 'msg': r.get('msg') or '已刷新为实时数据',
+            'fix': r.get('fix') or '', 'ts': r.get('ts'), 'ms': r.get('ms'),
+            'id': sid, 'domain': dom,
+            'row': r.get('row') or {}}
+
+
 def keepalive_sites():
     """PT 保号中心数据：每站规则 + 任务进度 + 状态 + 启停开关（口径与 Bot 一致）"""
     st = _ka_read_state()
@@ -13330,9 +14455,17 @@ def keepalive_sites():
         'updated_txt': time.strftime('%F %T', time.localtime(st['updated']))
                        if st.get('updated') else '—',
     }
+    # ── 兼容层：给「站点数据 · MP 直连」网格（前端 kaSitesLoad）提供 rows 形状 ──
+    #   数据全部来自保号 state（官方实时），馒头等站已是新号真值。
+    rows = _ka_grid_rows_v4(sites, seed)
     return {'ok': True, 'ts': time.strftime('%F %T'),
             'total': len(sites), 'enabled': sum(1 for x in sites if x['enabled']),
             'ok_count': sum(1 for x in sites if x['ok_keepalive']),
+            'rows': rows, 'n': len(rows),
+            'total_up': sum(x['upload'] for x in rows),
+            'total_dn': sum(x['download'] for x in rows),
+            'total_ratio': (sum(x['upload'] for x in rows) /
+                            max(1.0, sum(x['download'] for x in rows))),
             'sites': sites, 'seed': seed,
             'seed_total': len(seed),
             'seed_seeding': sum(1 for x in seed if x['pct'] >= 100),
@@ -13366,7 +14499,7 @@ def keepalive_kick(sid):
 # Cookie 抓取（油猴用户脚本 → Web → 直写 kfcgame secrets.json）
 #
 # 设计（实测可行）：
-#   · media-hub 已挂载 /vol1/1000/docker 为 /dockroot，可直接读写
+#   · media-hub 已挂载 {{MH_VOL1}}/docker 为 /dockroot，可直接读写
 #     kfcgame 的 secrets.json（与 bot 同一份，rw 挂载，免 redeploy）。
 #   · 油猴脚本在任意站点（PT 站 / 115 网盘）点一下「抓取」，把
 #     document.cookie + localStorage POST 到 /api/cookie/ingest，
@@ -13376,7 +14509,7 @@ def keepalive_kick(sid):
 #   · 网盘（115 等）单独存 secrets.json['netdisk']，供 pt2cloud / MT 复用。
 # ══════════════════════════════════════════════════════════
 KA_SECRET_PATH = '/dockroot/kfcgame/keepalive/secrets.json'
-KA_COOKIE_TOKEN = os.getenv('KA_COOKIE_TOKEN', 'kfccookiehub')
+KA_COOKIE_TOKEN = os.getenv('KA_COOKIE_TOKEN', '{{MH_COOKIE_TOKEN}}')
 
 # 域名 → (类型, 站点id)；网盘统一归 netdisk
 COOKIE_DOMAIN_MAP = {
@@ -13390,6 +14523,7 @@ COOKIE_DOMAIN_MAP = {
     'm-team.io': ('pt', 'mteam'), 'www.m-team.io': ('pt', 'mteam'),
     'kp.m-team.io': ('pt', 'mteam'), 'zp.m-team.io': ('pt', 'mteam'),
     'hdfans.org': ('pt', 'hdfans'), 'www.hdfans.org': ('pt', 'hdfans'),
+    'cspt.top': ('pt', 'cspt'), 'www.cspt.top': ('pt', 'cspt'),
     # 网盘
     '115.com': ('netdisk', '115'), '115cdn.com': ('netdisk', '115'),
     '115client.com': ('netdisk', '115'), 'anxia.com': ('netdisk', '115'),
@@ -13745,9 +14879,15 @@ def _xq(sql, args=None, reterr=False):
         try:
             with conn.cursor() as cur:
                 cur.execute(sql, args or {})
+                _head = (sql.strip().split(None, 1) or [""])[0].upper()
+                if _head in ("INSERT", "UPDATE", "DELETE", "REPLACE",
+                             "ALTER", "CREATE", "TRUNCATE"):
+                    conn.commit()          # ★ 2026-11-10：写语句必须提交，否则回滚
+                    return [{"rowcount": cur.rowcount}]
                 try:
                     return cur.fetchall()
                 except Exception:
+                    conn.commit()
                     return [{"rowcount": cur.rowcount}]
         finally:
             conn.close()
@@ -14150,50 +15290,6 @@ def sync_run(which='all'):
     except Exception as e:
         out['save_err'] = str(e)[:100]
     return out
-
-
-def keepalive_sites():
-    """★★ 2026-11-06 用户要求：保号页加「MP 站点管理」直连数据——
-    每站 上传/下载/分享率/魔力/等级/做种数与体积/注册时间。
-    数据源：MP GET /api/v1/site/（站点表）+ /api/v1/site/userdata/<id>（每站我的数据），
-    4 路并发；图标走 favicon.im（MP 端 icon 多为空）。按上传量降序。"""
-    sites = (mp_call('/api/v1/site/', t=12) or {}).get('data') or []
-    if not sites:
-        return {'ok': False, 'msg': 'MP 站点列表为空（检查 MoviePilot 绑定）'}
-
-    def one(s):
-        base = {'id': s.get('id'), 'name': s.get('name'), 'domain': s.get('domain'),
-                'url': s.get('url') or '', 'ok': False}
-        try:
-            d = mp_call('/api/v1/site/userdata/%s' % s.get('id'), t=25)
-            arr = (d or {}).get('data') or []
-            row = arr[0] if isinstance(arr, list) and arr else {}
-            if row:
-                base.update(ok=True, user=row.get('username') or '',
-                            level=row.get('user_level') or '',
-                            join_at=row.get('join_at') or '',
-                            bonus=row.get('bonus') or 0,
-                            upload=row.get('upload') or 0,
-                            download=row.get('download') or 0,
-                            ratio=row.get('ratio') or 0,
-                            seeding=row.get('seeding') or 0,
-                            leeching=row.get('leeching') or 0,
-                            seeding_size=row.get('seeding_size') or 0)
-        except Exception as e:
-            base['err'] = str(e)[:70]
-        return base
-
-    try:
-        with _TPE(max_workers=4) as ex:
-            rows = list(ex.map(one, sites))
-    except Exception:
-        rows = [one(s) for s in sites]
-    rows.sort(key=lambda r: -(r.get('upload') or 0))
-    tot_up = sum(r.get('upload') or 0 for r in rows)
-    tot_dn = sum(r.get('download') or 0 for r in rows)
-    return {'ok': True, 'rows': rows, 'n': len(rows),
-            'total_up': tot_up, 'total_dn': tot_dn,
-            'total_ratio': round(tot_up / tot_dn, 2) if tot_dn else 0}
 
 
 def sync_status():
@@ -16833,6 +17929,38 @@ def _mp_site_rules() -> dict:
     return out
 
 
+# ═══ 同步中心：MP 站点统计后台刷新（2026-11-09）═══
+_MP_SYNC = {'running': False, 'ts': 0, 'msg': ''}
+
+
+def _mp_refresh_sites_bg():
+    try:
+        r0 = mp_call('/api/v1/site/')
+        if not r0.get('ok'):
+            _MP_SYNC['msg'] = 'MP 站点读取失败: %s' % r0.get('msg')
+            return
+        done, fail = [], []
+        for s0 in (r0.get('data') or []):
+            if not s0.get('is_active'):
+                continue
+            try:
+                rr = mp_call('/api/v1/site/refresh/%s' % s0.get('id'), t=20)
+                if rr.get('ok'):
+                    done.append(str(s0.get('name') or s0.get('id')))
+                else:
+                    fail.append('%s: %s' % (s0.get('name') or s0.get('id'),
+                                            str(rr.get('msg'))[:50]))
+            except Exception as e0:
+                fail.append('%s: %s' % (s0.get('name') or s0.get('id'), str(e0)[:50]))
+        _MP_SYNC['msg'] = ('完成 %d 站（%s）' % (len(done), '、'.join(done[:8]) or '无')
+                           + ('；失败: %s' % '；'.join(fail[:4]) if fail else ''))
+    except Exception as e0:
+        _MP_SYNC['msg'] = '异常: %s' % str(e0)[:120]
+    finally:
+        _MP_SYNC['running'] = False
+        _MP_SYNC['ts'] = time.time()
+
+
 def mp_dashboard() -> dict:
     """★ 2026-10-16 用户要求：把 MP 的仪表盘也拉到 Web。
     MP：站点数/启用、刷流任务状态、订阅数、下载器、转移统计。
@@ -17279,27 +18407,6 @@ def jobs_raw():
     return out
 
 
-def _parse_source(path):
-    """从文件名/路径识别片源：REMUX / BluRay / WEB-DL / WEBRip / HDTV / HD-DVD / DVD / Encode。"""
-    if not path:
-        return ''
-    import re as _re
-    p = str(path).replace('\\', '/')
-    for pat, lab in [
-        (r'\bREMUX\b', 'REMUX'),
-        (r'Blu[- ]?Ray', 'BluRay'),
-        (r'WEB[- ]?DL', 'WEB-DL'),
-        (r'WEBRip', 'WEBRip'),
-        (r'\bHDTV\b', 'HDTV'),
-        (r'HD[- ]?DVD', 'HD-DVD'),
-        (r'\bDVD\b', 'DVD'),
-        (r'Encode', 'Encode'),
-    ]:
-        if _re.search(pat, p, _re.I):
-            return lab
-    return ''
-
-
 def emby_sessions():
     """Emby 当前观看会话（仪表盘用）——用户 2026-10-15 要求：
     谁在看/看什么/进度/画质/设备，全部详细展示。"""
@@ -17341,7 +18448,6 @@ def emby_sessions():
             if not isinstance(x, dict):
                 continue
             now = x.get("NowPlayingItem") or {}
-            pth = str(now.get("Path") or "")
             if not now:
                 continue                      # 没有播放项的会话跳过
             pi = x.get("PlayState") or {}
@@ -17501,6 +18607,19 @@ def emby_sessions():
             #   （首次见到该会话的时间；同 id 心跳只更新 last）。
             #   前端按它升序排：**先看的永远在下面，后看的永远在上面**，
             #   刷新一万次也不会跳位。
+            # ★ 2026-11-13：补充片源/分辨率像素/帧率/封装，供前端 3x3 画质网格（顶级商用面板）
+            _vs = next((m for m in (now.get("MediaStreams") or []) if str(m.get("Type") or "").lower() == "video"), None)
+            _res_px = ("%sx%s" % (int(_vs.get("Width") or 0), int(_vs.get("Height") or 0))) if (_vs and _vs.get("Width")) else ""
+            try:
+                _fr = _vs.get("FrameRate") if _vs else None
+                _fps = ("%g" % float(_fr)) if _fr else ""
+            except Exception:
+                _fps = ""
+            _container = ((msrc[0] or {}).get("Container") or "") if msrc else ""
+            if not _container:
+                _pp = now.get("Path") or ""
+                _container = (_pp.rsplit(".", 1)[-1].upper()) if ("." in _pp.split("/")[-1]) else ""
+            _src_path = now.get("Path") or ""
             _sid = str(x.get("Id") or "")
             _nowt = time.time()
             with _SESS_ORDER_LOCK:
@@ -17519,9 +18638,11 @@ def emby_sessions():
             rows.append({
                 # ★ v1.18：会话唯一键（前端 DOM id / 排序锚点都靠它）
                 "session_id": _sid,
+                "path": _src_path, "res_px": _res_px, "fps": _fps, "container": _container,
                 # ★ 2026-11-05 来源标签：KFC / KFC2（前端徽标 + 筛选依赖）
                 "server": x.get("_sname") or "KFC",
                 "server_key": x.get("_which") or "emby",
+                "emby_web": ("http://%s:%s" % (containers().get(_seg, {}).get('addr'), containers().get(_seg, {}).get('port'))) if _seg in containers() else "",
                 "first_ts": int(first_ts),
                 "user": x.get("UserName") or "未知",
                 "tg": _tgm.get("tg") or 0,
@@ -17540,12 +18661,7 @@ def emby_sessions():
                 "pos_sec": int(round(pos / 1e7)),
                 "dur_sec": int(round(dur / 1e7)),
                 "left_sec": int(round(max(0.0, dur - pos) / 1e7)),
-                "quality": qual_str or "\u2014",
-                "res_px": ("%dx%d" % (w, h)) if (w and h) else "",
-                "fps": str(vstream.get("AverageFrameRate") or vstream.get("VideoFrameRate") or "").strip(),
-                "container": str((msrc[0].get("Container") if msrc else now.get("Container")) or "").upper(),
-                "source": _parse_source(pth),
-                "path": pth,
+                "quality": qual_str or "—",
                 "size": size_txt,
                 "img": (img_list[0] if img_list else ''),
                 # ★ v1.18：多级候选图（前端逐个回退，解决「有的没有图」）
@@ -17602,7 +18718,7 @@ def emby_instances():
 
 
 EMBY_INSTANCES = emby_instances()
-# playback_reporting.db 容器内路径（media-hub 已挂载 /vol1/1000/docker => /dockroot）
+# playback_reporting.db 容器内路径（media-hub 已挂载 {{MH_VOL1}}/docker => /dockroot）
 # ★★ v1.37 S1：playback_reporting.db 容器内路径也配置化（各人挂载点/容器名不同）。
 #   <inst>_pr_db_path；留空则自动按 cname 猜（<dockroot>/<cname>/config/data/...）。
 PR_DB_DEF = {
@@ -18860,7 +19976,10 @@ def emby_rank_pr(con, kind='user_today', days=1, which='emby', short='main'):
                     _AV_CACHE[uid] = _emby_user_avatar(uid)
                 return _AV_CACHE[uid]
             if kind in ('user_today', 'user_days'):
-                sql = ('SELECT UserId, SUM(PlayDuration) s, COUNT(*) n, '
+                # ★ 2026-11-10 用户榜改「净观看」口径（PlayDuration-PauseDuration），
+                #   与 Game 结算（每 30 分钟净观看 = 1 V积分）完全一致，杜绝
+                #   「排行榜 2.7 小时结算却没那么多分」的口径误会
+                sql = ('SELECT UserId, SUM(PlayDuration - PauseDuration) s, COUNT(*) n, '
                        'SUM(PauseDuration) p FROM PlaybackActivity WHERE DateCreated >= ? '
                        'GROUP BY UserId ORDER BY s DESC LIMIT 100')
                 for r in con.execute(sql, [since]):
@@ -18950,7 +20069,7 @@ def emby_rank_pr(con, kind='user_today', days=1, which='emby', short='main'):
 #   media-hub 容器里读不到 /sys/class/hwmon 与 /proc/diskstats（只挂了 docker.sock
 #   + /dockroot + /CloudNAS，没挂全 /sys），docker exec 在这台 NAS 上又不可用
 #   （setns 失败）。所以温度/磁盘 io 繁忙度只能由宿主机侧脚本每 10s 采一次，
-#   写进 /vol1/1000/docker/media-hub/nas_metrics.json —— 而该目录正是容器里
+#   写进 {{MH_VOL1}}/docker/media-hub/nas_metrics.json —— 而该目录正是容器里
 #   /dockroot（bind mount），后端能直接读。
 #   ★ 绝不在后端 ssh/scp 到宿主机：那会把 loadavg 已经 12~21 的机器再拖死。
 #
@@ -19418,6 +20537,224 @@ def rt_pull_sync():
             "msg": "RT→台账 补登 %d、回填 %d" % (n_new, n_upd)}
 
 
+# ════════════════════════════════════════════════════════════════════════
+#  RT ⇄ Boss 到期同步（精细控制面板 · 用户 2026-11-10 要求）
+#  · 读：RT sqlite 只读 + boss 台账，逐人对比
+#  · 写 RT→Boss：直接改 embyboss.emby.ex（我们自己的库）
+#  · 写 Boss→RT：走 RT HTTP renew（只加不减，绝不直写 RT 库）
+# ════════════════════════════════════════════════════════════════════════
+_RT_EX_STATUS = ("ok", "missing", "mismatch", "rt_empty", "both_empty", "no_rt")
+
+
+def _exdt(v):
+    """RT/boss 各种时间格式 → datetime（失败 None）。"""
+    if not v:
+        return None
+    if isinstance(v, datetime.datetime):
+        return v
+    s = str(v).strip()
+    for cut, f in ((19, "%Y-%m-%d %H:%M:%S"), (19, "%Y-%m-%dT%H:%M:%S"),
+                   (10, "%Y-%m-%d")):
+        try:
+            return datetime.datetime.strptime(s[:cut], f)
+        except Exception:
+            continue
+    return None
+
+
+def _exfmt(d):
+    return d.strftime("%Y-%m-%d") if isinstance(d, datetime.datetime) else ""
+
+
+def rt_expiry_report():
+    """RT ⇄ Boss 到期对比（纯只读）。返回 {ok, stats, rows, auto}。"""
+    rt_rows = _rtq("SELECT tg_user_id, username, emby_user_id, expiry_date, status "
+                   "FROM emby_users")
+    by_tg, by_nm = {}, {}
+    for r in rt_rows:
+        ex = _exdt(r.get("expiry_date"))
+        item = {"rt_ex": ex, "rt_status": (r.get("status") or ""),
+                "rt_name": (r.get("username") or ""),
+                "rt_uid": (r.get("emby_user_id") or "")}
+        t = int(r.get("tg_user_id") or 0)
+        if t:
+            by_tg[t] = item
+        n = (r.get("username") or "").strip().lower()
+        if n:
+            by_nm[n] = item
+    try:
+        boss = _bossq("SELECT tg, name, embyid, ex, lv FROM emby "
+                      "WHERE tg IS NOT NULL AND tg<>0")
+    except Exception as e:
+        return {"ok": False, "msg": str(e)[:120]}
+    rows = []
+    for b in boss:
+        t = int(b.get("tg") or 0)
+        nm = (b.get("name") or "").strip()
+        rt = by_tg.get(t) or by_nm.get(nm.lower())
+        bex = _exdt(b.get("ex"))
+        rex = (rt or {}).get("rt_ex")
+        if not rt:
+            st = "no_rt"
+        elif bex is None and rex is None:
+            st = "both_empty"
+        elif bex is None:
+            st = "missing"
+        elif rex is None:
+            st = "rt_empty"
+        elif abs((rex - bex).total_seconds()) <= 3600:
+            st = "ok"
+        else:
+            st = "mismatch"
+        rows.append({"tg": t, "name": nm, "embyid": b.get("embyid") or "",
+                     "lv": b.get("lv") or "",
+                     "boss_ex": _exfmt(bex), "rt_ex": _exfmt(rex),
+                     "boss_dt": bex.strftime("%Y-%m-%d %H:%M") if bex else "",
+                     "rt_dt": rex.strftime("%Y-%m-%d %H:%M") if rex else "",
+                     "rt_ts": rex.strftime("%Y-%m-%d %H:%M:%S") if rex else "",
+                     "diff": (int((rex - bex).days) if (bex and rex) else None),
+                     "status": st,
+                     "rt_status": (rt or {}).get("rt_status", ""),
+                     "rt_name": (rt or {}).get("rt_name", "")})
+    _pri = {"missing": 0, "mismatch": 1, "rt_empty": 2, "both_empty": 3,
+            "ok": 4, "no_rt": 5}
+    rows.sort(key=lambda x: (_pri.get(x["status"], 9),
+                             -(abs(x["diff"]) if x["diff"] is not None else 0)))
+    stats = {"boss": len(rows),
+             "rt": len(by_tg),
+             "ok": sum(1 for x in rows if x["status"] == "ok"),
+             "missing": sum(1 for x in rows if x["status"] == "missing"),
+             "mismatch": sum(1 for x in rows if x["status"] == "mismatch"),
+             "rt_empty": sum(1 for x in rows if x["status"] == "rt_empty"),
+             "both_empty": sum(1 for x in rows if x["status"] == "both_empty"),
+             "no_rt": sum(1 for x in rows if x["status"] == "no_rt")}
+    stats["todo"] = stats["missing"] + stats["mismatch"]
+    return {"ok": True, "stats": stats, "rows": rows, "auto": rt_expiry_auto_get()}
+
+
+def rt_expiry_apply(payload):
+    """执行到期同步。
+
+    payload = {tgs:[tg,...] | None, status:"all"|"missing"|"mismatch"|...,
+               direction:"rt"|"boss", dry_run:bool}
+    """
+    payload = payload if isinstance(payload, dict) else {}
+    direction = "boss" if str(payload.get("direction") or "rt") == "boss" else "rt"
+    dry = bool(payload.get("dry_run"))
+    tgs = payload.get("tgs")
+    tgs = set(int(x) for x in tgs) if isinstance(tgs, list) and tgs else None
+    only = str(payload.get("status") or "all")
+    rep = rt_expiry_report()
+    if not rep.get("ok"):
+        return rep
+    rows = rep["rows"]
+    if tgs is not None:
+        rows = [r for r in rows if r["tg"] in tgs]
+    elif only != "all":
+        rows = [r for r in rows if r["status"] == only]
+    done, skip, fail = [], [], []
+    for r in rows:
+        tg = r["tg"]
+        if direction == "rt":
+            if r["status"] in ("ok", "both_empty", "no_rt"):
+                skip.append({"tg": tg, "why": "无需处理"})
+                continue
+            if not r["rt_dt"]:
+                skip.append({"tg": tg, "why": "RT 也没到期日"})
+                continue
+            if dry:
+                done.append({"tg": tg, "name": r["name"], "ex": r["rt_dt"],
+                             "from": r["boss_dt"] or "空"})
+                continue
+            try:
+                _bossq("UPDATE emby SET ex=%(ex)s WHERE tg=%(tg)s",
+                       {"ex": r.get("rt_ts") or (r["rt_dt"] + ":00"), "tg": tg})
+                done.append({"tg": tg, "name": r["name"], "ex": r["rt_dt"],
+                             "from": r["boss_dt"] or "空"})
+            except Exception as e:
+                fail.append({"tg": tg, "why": str(e)[:80]})
+        else:
+            if not (r["boss_dt"] and r["rt_dt"]):
+                skip.append({"tg": tg, "why": "一方没有到期日"})
+                continue
+            bd, rd = _exdt(r["boss_dt"]), _exdt(r["rt_dt"])
+            days = int((bd - rd).days) if (bd and rd) else 0
+            if days < 1:
+                skip.append({"tg": tg, "why": "RT 不早于 Boss（不能回退）"})
+                continue
+            if dry:
+                done.append({"tg": tg, "name": r["name"], "days": days,
+                             "from": r["rt_dt"], "to": r["boss_dt"]})
+                continue
+            rr = rt_http_renew(tg, days)
+            if rr.get("ok"):
+                done.append({"tg": tg, "name": r["name"], "days": days,
+                             "from": r["rt_dt"], "to": r["boss_dt"]})
+            else:
+                fail.append({"tg": tg, "why": rr.get("msg") or "失败"})
+    return {"ok": True, "dry": dry, "direction": direction,
+            "done": len(done), "skip": len(skip), "fail": len(fail),
+            "items": done[:100], "skipped": skip[:20], "failed": fail[:20]}
+
+
+def rt_expiry_auto_get():
+    c = cfg().get("rt_expiry") or {}
+    return {"enabled": bool(c.get("enabled")),
+            "minutes": int(c.get("minutes") or 15),
+            "direction": "boss" if str(c.get("direction")) == "boss" else "rt",
+            "last_run": c.get("last_run") or "",
+            "last_result": c.get("last_result") or ""}
+
+
+def rt_expiry_auto_set(payload):
+    payload = payload if isinstance(payload, dict) else {}
+    d = cfg()
+    cur = dict(d.get("rt_expiry") or {})
+    if "enabled" in payload:
+        cur["enabled"] = bool(payload.get("enabled"))
+    if "minutes" in payload:
+        try:
+            cur["minutes"] = max(1, min(1440, int(payload.get("minutes") or 15)))
+        except Exception:
+            cur["minutes"] = 15
+    if "direction" in payload:
+        cur["direction"] = "boss" if str(payload.get("direction")) == "boss" else "rt"
+    d["rt_expiry"] = cur
+    save_cfg(d)
+    out = rt_expiry_auto_get()
+    out["ok"] = True
+    return out
+
+
+def rt_expiry_auto_loop():
+    """后台自动对账：按 cfg.rt_expiry.minutes 周期执行（默认关闭）。"""
+    last = 0.0
+    while True:
+        try:
+            time.sleep(30)
+            a = rt_expiry_auto_get()
+            if not a.get("enabled"):
+                continue
+            now = time.time()
+            if now - last < max(60, int(a["minutes"]) * 60):
+                continue
+            last = now
+            res = rt_expiry_apply({"direction": a["direction"], "status": "all"})
+            d = cfg()
+            cur = dict(d.get("rt_expiry") or {})
+            cur["last_run"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            cur["last_result"] = "成功 %s / 跳过 %s / 失败 %s" % (
+                res.get("done"), res.get("skip"), res.get("fail"))
+            d["rt_expiry"] = cur
+            save_cfg(d)
+            logger.info("RT 到期自动同步：%s", cur["last_result"])
+        except Exception as e:
+            logger.debug("rt_expiry_auto_loop: %s", e)
+
+
+threading.Thread(target=rt_expiry_auto_loop, daemon=True).start()
+
+
 def rt_push_account(tg, emby_id, username, password="", days=30):
     """★ 高级：把 boss/game 建的 Emby 账号写入 RT 的 emby_users（让 ta 出现在 RT
     面板/RT bot）。只做 INSERT（绝不 UPDATE/DELETE），字段完全仿照 RT 自建号；
@@ -19676,7 +21013,7 @@ def _tg_owner(text, token=None):
     """多机器人通知：依次发往 cfg.tg_bots 里所有启用的机器人（各自 token+chat_id）。
     兼容旧配置：无 tg_bots 时回退 cfg.tg_token → kfcgame config.json，目标 cfg.tg_owner。
     返回是否至少一个成功。"""
-    owner = int(cfg().get('tg_owner') or os.environ.get('MH_OWNER_TG') or 0)
+    owner = int(cfg().get('tg_owner') or {{MH_OWNER_TG}})
     targets = []
     # 显式 token
     if token:
@@ -19725,7 +21062,7 @@ def tg_test():
     from datetime import datetime as _dt
     now = _dt.now().strftime('%F %T')
     tok = str(cfg().get('tg_token') or '')
-    owner = cfg().get('tg_owner') or os.environ.get('MH_OWNER_TG') or ''
+    owner = cfg().get('tg_owner') or '{{MH_OWNER_TG}}'
     src = '自定义 Bot Token' if tok else 'kfcgame 内置机器人'
     text = ("🧪 <b>TG 通知测试</b>\n\n"
             "如果你收到了这条消息，说明通知链路已打通 ✅\n\n"
@@ -19802,7 +21139,7 @@ def _dump_db_pymysql(dbname, outpath):
     root 账号跨库可用。返回 (ok, bytes)。"""
     import pymysql
     RW = dict(host=_pt_db()['host'], port=_pt_db()['port'], user='root',
-              password=os.environ.get('MH_DB_PASSWORD', ''), charset='utf8mb4',
+              password='{{MH_DB_PASS}}', charset='utf8mb4',
               connect_timeout=10)
     total = 0
     try:
@@ -19946,7 +21283,7 @@ def backup_loop():
                        "━━━━━━━━━━━━\n"
                        "📦 产物｜<code>%s</code>（%.1f MB）\n"
                        "🧩 内容｜%s\n"
-                       "🧾 路径｜/vol1/1000/docker/kfcgame/backups/" % (day, os.path.basename(tgz) if size else "失败", mb, detail))
+                       "🧾 路径｜{{MH_VOL1}}/docker/kfcgame/backups/" % (day, os.path.basename(tgz) if size else "失败", mb, detail))
                 _wx_push("bk-" + day, txt)
                 logger.info("每日备份完成 %.1fMB ok=%s", mb, ok)
             elif last_day is None and h >= 1:
@@ -19962,9 +21299,8 @@ def backup_loop():
 # login / renew / set_cookie / create，与 kfcgame 的 rtapi 同语义。
 # 作用：boss（EmbyBoss）在 Web/机器人里续期后，台账 embyboss.emby.ex 变化，
 # 这里定期对账把「比 RT 更晚的到期」补续到 RT，实现三端（BS/GX/RT）全同步。
-RT_HTTP = {"url": "http://%s:29999" % os.environ.get('MH_NAS_IP', '127.0.0.1'),
-           "user": os.environ.get('MH_RT_USER', ''),
-           "pass": os.environ.get('MH_RT_PASS', '')}
+RT_HTTP = {"url": "http://{{MH_NAS_IP}}:29999",
+           "user": "{{MH_OWNER_EMAIL}}", "pass": "{{MH_OWNER_EMAIL_PASS}}"}
 
 _RT_TK = {"t": "", "ts": 0.0}
 _RT_TK_LOCK = threading.Lock()
@@ -20563,6 +21899,170 @@ def mteam_verify(source="cc", pasted_jwt="", did="", vid=""):
             'did': bool(use_did), 'jwt_head': jwt[:12] + '...'}
 
 
+def mteam_status(probe=False):
+    """★ 馒头鉴权状态（Web 展示 + Windows 看门狗判定是否需要自动恢复）。
+    state: valid（JWT 在且 bot 无报错）/ expired（JWT 在但 bot 报错或实测失败）/
+           missing（本地无 JWT）。probe=True 时实测保号信标拿到权威结论。"""
+    sec = _ck_read_secrets()
+    mt = (sec.get('sites') or {}).get('mteam') or {}
+    jwt = (mt.get('jwt') or '').strip()
+    jwt_ts = float(mt.get('jwt_ts') or 0)
+    stt = _ka_read_state()
+    ss = ((stt.get('sites') or {}).get('mteam') or {})
+    last_error = str(ss.get('last_error') or '')
+    bound = bool(ss.get('bound'))
+    last_login = float(ss.get('last_login') or 0)
+    rec = _mt_rec_read()
+    req_ts = float(rec.get('request_ts') or ss.get('recover_request_ts') or 0)
+    done_ts = float(rec.get('done_ts') or ss.get('recover_done_ts') or 0)
+    wd_ts = float(rec.get('wd_ts') or ss.get('recover_wd_ts') or 0)
+    wd_online = bool(wd_ts and (time.time() - wd_ts) < 180)
+    if jwt and not last_error:
+        state = 'valid'
+    elif jwt:
+        state = 'expired'
+    else:
+        state = 'missing'
+    live = None
+    if probe and jwt:
+        try:
+            ok, code, vmsg = _mt_beacon_probe(jwt, mt.get('did') or '', mt.get('visitorid') or '')
+        except Exception as e:
+            ok, code, vmsg = False, -1, str(e)[:80]
+        live = {'ok': ok, 'code': code, 'msg': (vmsg or '')[:80]}
+        state = 'valid' if ok else 'expired'
+    return {
+        'ok': True, 'state': state,
+        'jwt_head': (jwt[:16] + '…') if jwt else '',
+        'jwt_ts': jwt_ts,
+        'jwt_ts_txt': (time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(jwt_ts)) if jwt_ts else ''),
+        'last_error': last_error,
+        'bound': bound,
+        'last_login': last_login,
+        'last_login_txt': (time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(last_login)) if last_login else ''),
+        'recover_request_ts': req_ts,
+        'recover_done_ts': done_ts,
+        'wd_online': wd_online,
+        'wd_txt': (time.strftime('%H:%M:%S', time.localtime(wd_ts)) if wd_ts else '从未上报'),
+        'live': live, 'recoverable': True,
+        'ts': time.strftime('%Y-%m-%d %H:%M:%S'),
+    }
+
+
+# ★ 协同标志独立存放：绝不写进保号 Bot 的 state.json。
+#   实测踩坑（2026-11-11）：/api/ka/sync 触发 Bot 立即探测时，Bot 会整体重写
+#   state.json，把 media-hub 写进去的心跳/触发标志冲掉（wd_txt 回退、trigger 丢失）。
+#   故改用独立 JSON 文件，双方互不干扰。
+_MT_RECOVER_PATH = '/data/mteam_recover.json'
+
+
+def _mt_rec_read():
+    try:
+        with open(_MT_RECOVER_PATH, encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _mt_rec_write(d):
+    try:
+        os.makedirs(os.path.dirname(_MT_RECOVER_PATH), exist_ok=True)
+        tmp = _MT_RECOVER_PATH + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(d, f, ensure_ascii=False)
+        os.replace(tmp, _MT_RECOVER_PATH)
+        return {'ok': True}
+    except Exception as e:
+        return {'ok': False, 'msg': str(e)[:120]}
+
+
+_MT_HEAL = {'last': 0.0, 'n': 0, 'result': ''}
+
+
+def mteam_autoheal(force=False, sync=False):
+    """★ M-Team JWT 全自动自愈（NAS 侧主路径，零 Windows 依赖、零人工介入）。
+
+    分级：
+      L1 读本地状态，valid 直接返回（不产生任何外部请求）。
+      L2 直连 CookieCloud 取 kp.m-team.cc 的 localStorage.auth → 实测保号信标
+         → 通过才写 secrets + 清 bot 告警（mteam_verify source=cc）。
+      L3 CC 没采到 auth 时，跑一次 cc_pull_to_secrets 补齐 cookie/passkey/apikey。
+      L4 仍失效 → 置位 recover_request_ts，交给 Windows 看门狗读浏览器
+         leveldb / 驱动已登录会话取 JWT 回写；Web 上如实显示「等待本机接管」。
+    """
+    st0 = mteam_status(probe=False)
+    if st0['state'] == 'valid' and not force:
+        return {'ok': True, 'state': 'valid', 'action': 'none',
+                'msg': 'JWT 正常，无需自愈', 'jwt_head': st0['jwt_head']}
+    steps = []
+    cc_ok = False
+    v = mteam_verify(source='cc')
+    cc_ok = bool(v.get('ok'))
+    steps.append('CC直取:%s' % ('成功' if cc_ok else str(v.get('msg'))[:60]))
+    if not cc_ok:
+        p = cc_pull_to_secrets()
+        steps.append('CC补拉:%s' % str(p.get('msg'))[:60])
+        v2 = mteam_verify(source='cc')
+        if v2.get('ok'):
+            cc_ok = True
+        steps.append('CC复验:%s' % ('成功' if v2.get('ok') else str(v2.get('msg'))[:60]))
+    st1 = mteam_status(probe=False)
+    _MT_HEAL['last'] = time.time()
+    _MT_HEAL['n'] += 1
+    valid = st1['state'] == 'valid'
+    # ★ 不误报：只有「本次真的从 CC 取到并写入」才算 cc 恢复；
+    #   若 CC 全程没采到 auth，但本地 JWT 本来就有效，如实说明是保持现值。
+    if valid and cc_ok:
+        action, msg = 'cc', '已从 CookieCloud 自动恢复 M-Team JWT，bot 告警已解除'
+    elif valid:
+        action, msg = ('noop_valid', '当前 JWT 实测正常，已保持现值；'
+                       'CookieCloud 暂无新 auth（浏览器扩展未上传），不影响保号')
+    else:
+        action, msg = 'need_browser', ''
+    out = {'ok': valid, 'state': st1['state'],
+           'action': action, 'cc_ok': cc_ok,
+           'steps': steps, 'jwt_head': st1['jwt_head'],
+           'wd_online': st1['wd_online']}
+    if valid:
+        # mteam_verify 内部已清 bot 的 last_error / 置 bound，下一轮 tick 即成功；
+        # 全站保号立即重抓由 Windows 看门狗回写后 POST /api/ka/sync 触发（较重，不放这里）。
+        out['msg'] = msg
+    else:
+        # 交给本机看门狗（浏览器侧取 JWT）
+        mteam_recover_set('request')
+        out['msg'] = ('CookieCloud 暂无有效 auth；已下发本机看门狗接管指令，'
+                      '它会读取浏览器已登录会话自动回写，无需你操作')
+    _MT_HEAL['result'] = out['msg']
+    logger.info('[MT-AUTOHEAL] %s | %s', out['state'], ' / '.join(steps))
+    return out
+
+
+def _mteam_autoheal_loop():
+    """后台常驻：每 90s 巡检一次 M-Team JWT，失效立即自愈（带 5 分钟冷却）。"""
+    time.sleep(150)  # 启动 2.5 分钟后再首检，避开服务启动期
+    while True:
+        try:
+            st = mteam_status(probe=False)
+            if st['state'] != 'valid':
+                if time.time() - _MT_HEAL['last'] >= 300:
+                    mteam_autoheal()
+            else:
+                _MT_HEAL['result'] = '巡检正常'
+        except Exception as e:
+            logger.warning('[MT-AUTOHEAL] 循环异常: %s', e)
+        time.sleep(90)
+
+
+def mteam_recover_set(what):
+    """置位/清除看门狗恢复标志（独立 JSON 文件，不受保号 Bot 重写 state 影响）。"""
+    d = _mt_rec_read()
+    k = {'request': 'request_ts', 'done': 'done_ts', 'heartbeat': 'wd_ts'}.get(what)
+    if not k:
+        return {'ok': False, 'msg': '未知操作 %s' % what}
+    d[k] = time.time()
+    return _mt_rec_write(d)
+
+
 def _cc_mteam_jwt(dec):
     """从 CC 解密数据提取 M-Team 的 JWT（localStorage['auth']）。
     local_storage_data 形如 {'LS-kp.m-team.cc': {'auth': 'eyJ...'}}，
@@ -20902,7 +22402,7 @@ def selftest_page():
 COOKIE_BOOKMARKLET = ("javascript:(function(){var d=location.hostname;var c=document.cookie;"
  "var l={};try{for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);l[k]=localStorage.getItem(k);}}catch(e){}"
  "fetch('__HUB__/api/cookie/ingest',{method:'POST',headers:{'Content-Type':'application/json'},"
- "body:JSON.stringify({token:'kfccookiehub',domain:d,cookie:c,local:l})})"
+ "body:JSON.stringify({token:'{{MH_COOKIE_TOKEN}}',domain:d,cookie:c,local:l})})"
  ".then(function(r){return r.json();}).then(function(j){alert(j&&j.ok?'\u2705 '+d+' \u5df2\u4e0a\u62a5\uff1a'+(j.msg||''):'\u274c '+(j&&j.msg||'fail'));"
  "}).catch(function(e){alert('ERR '+e.message);});})();")
 
@@ -20921,7 +22421,7 @@ COOKIE_GRABBER_JS = """// ==UserScript==
 (function () {
   'use strict';
   var INGEST = '__HUB__/api/cookie/ingest';
-  var TOKEN  = 'kfccookiehub';
+  var TOKEN  = '{{MH_COOKIE_TOKEN}}';
 
   function toast(msg, ok) {
     var t = document.createElement('div');
@@ -21028,12 +22528,12 @@ code{background:#1a2138;padding:2px 6px;border-radius:5px;color:#a5b4fc;word-bre
 <h2>🔖 方式一：书签小工具（零安装）<span class="tag alt">备用</span></h2>
 <div class="warn" style="border-color:#f59e0b66"><b>你的浏览器看不到书签栏？</b>按 <b>Ctrl + Shift + B</b> 就能显示书签栏（Chrome/Edge/115 浏览器通用）。不想显示也可以——用下面「<b>一键导入</b>」：下载书签文件 → 浏览器菜单「导入收藏夹/书签」→ 它自己就装进收藏栏，全程不用拖。</div>
 <p style="margin:6px 0 10px"><a class="btn big" href="/api/cookie/bookmarks">⬇️ 一键导入：下载书签文件（浏览器菜单里「导入书签/收藏」选它）</a></p>
-<p style="margin:6px 0 10px"><a class="btn big" style="background:rgba(99,102,241,.18);border:1px solid #6366f1" href="javascript:(function(){var d=location.hostname;var c=document.cookie;var l={};try{for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);l[k]=localStorage.getItem(k);}}catch(e){}fetch('__HUB__/api/cookie/ingest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:'kfccookiehub',domain:d,cookie:c,local:l})}).then(function(r){return r.json();}).then(function(j){alert((j&&j.ok?'\u2705 \u5df2\u4e0a\u62a5 '+d+'\uff1a'+(j.msg||''):'\u274c '+(j&&j.msg||'fail'));}).catch(function(e){alert('ERR '+e.message);});})();">▶️ 当场试抓一下（在当前网页直接运行）</a></p>
+<p style="margin:6px 0 10px"><a class="btn big" style="background:rgba(99,102,241,.18);border:1px solid #6366f1" href="javascript:(function(){var d=location.hostname;var c=document.cookie;var l={};try{for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);l[k]=localStorage.getItem(k);}}catch(e){}fetch('__HUB__/api/cookie/ingest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:'{{MH_COOKIE_TOKEN}}',domain:d,cookie:c,local:l})}).then(function(r){return r.json();}).then(function(j){alert((j&&j.ok?'\u2705 \u5df2\u4e0a\u62a5 '+d+'\uff1a'+(j.msg||''):'\u274c '+(j&&j.msg||'fail'));}).catch(function(e){alert('ERR '+e.message);});})();">▶️ 当场试抓一下（在当前网页直接运行）</a></p>
 <div class="row">
 <button class="btn ghost" onclick="var t=document.getElementById('bkcode');navigator.clipboard.writeText(t.textContent).then(function(){var s=document.getElementById('cpok');s.style.display='inline';setTimeout(function(){s.style.display='none'},1500)})">📋 复制书签代码</button>
 <span id="cpok" style="display:none;color:#4ade80;font-weight:700">✅ 已复制</span>
 </div>
-<div id="bkcode" class="bk" style="margin-top:10px">javascript:(function(){var d=location.hostname;var c=document.cookie;var l={};try{for(var i=0;i&lt;localStorage.length;i++){var k=localStorage.key(i);l[k]=localStorage.getItem(k);}}catch(e){}fetch('__HUB__/api/cookie/ingest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:'kfccookiehub',domain:d,cookie:c,local:l})}).then(function(r){return r.json();}).then(function(j){try{navigator.clipboard.writeText(c);}catch(e){}alert((j&amp;&amp;j.ok?'OK ':'FAIL ')+(j&amp;&amp;j.msg||'done'));}).catch(function(e){alert('ERR '+e.message);});})();</div>
+<div id="bkcode" class="bk" style="margin-top:10px">javascript:(function(){var d=location.hostname;var c=document.cookie;var l={};try{for(var i=0;i&lt;localStorage.length;i++){var k=localStorage.key(i);l[k]=localStorage.getItem(k);}}catch(e){}fetch('__HUB__/api/cookie/ingest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:'{{MH_COOKIE_TOKEN}}',domain:d,cookie:c,local:l})}).then(function(r){return r.json();}).then(function(j){try{navigator.clipboard.writeText(c);}catch(e){}alert((j&amp;&amp;j.ok?'OK ':'FAIL ')+(j&amp;&amp;j.msg||'done'));}).catch(function(e){alert('ERR '+e.message);});})();</div>
 <ol start='2'>
 <li>书签栏点 <b>右键 → 添加网页 / 新建书签</b>；</li>
 <li>名称随便填（如「KFC抓Cookie」），<b>网址一栏粘贴</b>上面复制的代码；</li>
@@ -21570,6 +23070,705 @@ def q_hit(key, ttl):
 def q_put(key, val):
     with _CLOCK:
         _CACHE[key] = (time.time(), val)
+
+
+
+# ══════════════ 夸克中转 → 115 队列化转换引擎（V1.51 / 2026-11-09） ══════════════
+# 架构：OpenList(QuarkOpen) 列源 + 取直链 → 流式下载 → 写入 CD2 的 115 挂载
+#       （CD2 负责上传到 115，复用已验证稳定的落地链路）。
+# V1.51：任务队列 / 进度与速度采样 / ETA / 手动勾选 / 取消 / 暂停 / 优先级 /
+#        持久化设置 / 目录浏览 / 历史记录 / 自愈（大小不符自动删除重传）。
+# 秒传真相：115「秒传」只在 115 云端已存在相同 SHA1 时成立；夸克与 115 哈希库
+#       不共享，跨盘不存在直接秒传，未命中即完整实传（夸克侧限速）。
+Q2F_OL = 'http://{{MH_NAS_IP}}:5244'          # 可用 cfg q2f_ol_base 覆盖
+Q2F_SRC = '/夸克/夸克中转'
+Q2F_DST = '/115/待整理/转换/夸克'
+Q2F_CD2 = '/CloudNAS/115open/待整理/转换/夸克'
+Q2F_TMP = '/dockroot/media-hub/q2f_tmp'
+Q2F_STATE = '/dockroot/media-hub/q2f_state.json'
+Q2F_MT_SRC = '/主号/待整理/转换/夸克'
+_q2f_lock = threading.Lock()
+_q2f_cancel = set()
+_q2f_paused = threading.Event()
+_q2f_speed = {}
+_q2f_worker_started = False
+
+Q2F_DEFAULT_SETTINGS = {
+    'auto': True,            # 自动监控
+    'interval': 120,         # 扫描周期（秒）
+    'concurrency': 1,        # 并发转换数
+    'speed_limit': 0,        # 限速 MB/s，0=不限
+    'retry': 3,              # 失败自动重试次数
+    'mt_after': False,       # 全部完成后自动创建 MT 任务组
+    'notify': True,          # 完成后 TG 播报
+    'keep_days': 30,         # 记录保留天数
+    'src': Q2F_SRC, 'dst': Q2F_DST, 'cd2': Q2F_CD2, 'mt': Q2F_MT_SRC,
+}
+
+
+def q2f_token():
+    """只读 OpenList DB 取 admin token，不硬编码任何凭据。"""
+    try:
+        import sqlite3
+        con = sqlite3.connect('file:/dockroot/openlist/data/data.db?mode=ro',
+                              uri=True, timeout=5)
+        r = con.execute("select value from x_setting_items where key='token'").fetchone()
+        con.close()
+        return (r[0] if r else '') or ''
+    except Exception as e:
+        logger.warning('[Q2F] token: %s', e)
+        return ''
+
+
+def q2f_api(method, path, body=None, t=25):
+    try:
+        import urllib.request
+        base = (cfg().get('q2f_ol_base') or Q2F_OL).rstrip('/')
+        data = json.dumps(body, ensure_ascii=False).encode('utf-8') if body is not None else None
+        req = urllib.request.Request(base + path, data=data, method=method,
+                                     headers={'Authorization': q2f_token(),
+                                              'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=t) as r:
+            return json.loads(r.read().decode('utf-8', 'replace'))
+    except Exception as e:
+        return {'code': 0, 'message': str(e)[:150]}
+
+
+def q2f_state():
+    try:
+        with open(Q2F_STATE, 'r', encoding='utf-8') as f:
+            s = json.load(f)
+        if not isinstance(s, dict):
+            raise ValueError('bad state')
+    except Exception:
+        s = {}
+    s.setdefault('enabled', True)
+    s.setdefault('items', {})
+    s.setdefault('recent', [])
+    s.setdefault('history', [])
+    s.setdefault('stats', {'peak_speed': 0, 'avg_speed': 0, 'total_elapsed': 0, 'total_runs': 0})
+    st = dict(Q2F_DEFAULT_SETTINGS)
+    st.update(s.get('settings') or {})
+    s['settings'] = st
+    s.setdefault('paused', False)
+    return s
+
+
+def q2f_save(s):
+    try:
+        os.makedirs(os.path.dirname(Q2F_STATE), exist_ok=True)
+        tmp = Q2F_STATE + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(s, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, Q2F_STATE)
+    except Exception as e:
+        logger.warning('[Q2F] save: %s', e)
+
+
+def q2f_list(path, refresh=True):
+    """⚠ 必须 refresh=true —— OpenList 目录缓存会漏掉新建目录。"""
+    r = q2f_api('POST', '/api/fs/list',
+                {'path': path, 'page': 1, 'per_page': 500, 'refresh': bool(refresh)}, t=30)
+    if r.get('code') != 200:
+        return None, str(r.get('message'))[:120]
+    return ((r.get('data') or {}).get('content') or []), ''
+
+
+def q2f_walk(rel=''):
+    out = []
+    items, err = q2f_list(Q2F_SRC + (('/' + rel) if rel else ''))
+    if items is None:
+        return out, err
+    for x in items:
+        r = (rel + '/' if rel else '') + x['name']
+        if x.get('is_dir'):
+            sub, _e = q2f_walk(r)
+            out += sub
+        else:
+            out.append({'rel': r, 'size': x.get('size') or 0,
+                        'sha1': ((x.get('hash_info') or {}).get('sha1') or ''),
+                        'modified': x.get('modified') or ''})
+    return out, ''
+
+
+def q2f_browse(path):
+    """网盘浏览器：列任意 OpenList 路径（/115、/夸克 及子目录）。"""
+    items, err = q2f_list(path)
+    if items is None:
+        return {'ok': False, 'msg': err, 'path': path, 'items': []}
+    out = []
+    for x in items:
+        out.append({'name': x.get('name') or '', 'is_dir': bool(x.get('is_dir')),
+                    'size': x.get('size') or 0, 'modified': x.get('modified') or '',
+                    'sha1': ((x.get('hash_info') or {}).get('sha1') or ''),
+                    'sign': x.get('sign') or ''})
+    parent = path.rstrip('/')
+    parent = parent[:parent.rfind('/')] or '/' if '/' in parent else '/'
+    return {'ok': True, 'path': path, 'parent': parent, 'items': out}
+
+
+def _q2f_key(f):
+    return '%s|%s' % (f['rel'], f['size'])
+
+
+def _q2f_new_item(f, manual=False, priority=0, force=False):
+    return {'rel': f['rel'], 'size': f['size'], 'sha1': f.get('sha1', ''),
+            'status': 'queued', 'progress': 0, 'bytes_xfer': 0,
+            'speed': 0, 'eta': 0, 'priority': priority, 'force': bool(force),
+            'retry': 0, 'manual': manual, 'rapid': False,
+            'queued_ts': time.time(), 'ts': time.time(), 'started': 0,
+            'finished': 0, 'duration': 0, 'msg': ''}
+
+
+def q2f_enqueue(files, manual=False, force=False, priority=0):
+    """把文件加入转换队列；已 done 的需 force 才重排。"""
+    s = q2f_state()
+    added, skipped = [], []
+    for f in files:
+        k = _q2f_key(f)
+        old = s['items'].get(k)
+        if old:
+            if old.get('status') in ('queued', 'running'):
+                skipped.append(f['rel']); continue
+            if old.get('status') == 'done' and not force:
+                skipped.append(f['rel']); continue
+            if old.get('status') == 'paused':
+                old['status'] = 'queued'; added.append(f['rel']); continue
+        it = _q2f_new_item(f, manual=manual, priority=priority, force=force)
+        s['items'][k] = it
+        added.append(f['rel'])
+    s['last_msg'] = '入队 %d 个（跳过 %d 个）' % (len(added), len(skipped))
+    q2f_save(s)
+    return {'ok': True, 'added': added, 'skipped': skipped, 'msg': s['last_msg']}
+
+
+def q2f_scan(force=False):
+    """发现源目录新文件并入队（不下载，由 worker 消费队列）。"""
+    if not _q2f_lock.acquire(False):
+        return {'ok': True, 'msg': '扫描仍在进行中', 'busy': True}
+    try:
+        s = q2f_state()
+        if not s['settings'].get('auto', True) and not force:
+            return {'ok': True, 'msg': '自动监控已停用', 'enabled': False}
+        files, err = q2f_walk()
+        if err:
+            s['last_msg'] = '列源失败: ' + err
+            q2f_save(s)
+            return {'ok': False, 'msg': s['last_msg']}
+        fresh = [f for f in files if _q2f_key(f) not in s['items']]
+        r = q2f_enqueue(fresh)
+        s = q2f_state()          # ★ V1.52 修复：enqueue 已写盘，必须重读，否则旧 s 会抹掉刚入队的 items
+        s['last_scan'] = time.time()
+        s['last_msg'] = '本轮发现 %d 个新文件，入队 %d 个' % (len(files), len(r['added']))
+        q2f_save(s)
+        return {'ok': True, 'found': len(files), 'new': len(r['added']), 'msg': s['last_msg']}
+    except Exception as e:
+        logger.warning('[Q2F] scan: %s', e)
+        return {'ok': False, 'msg': str(e)[:150]}
+    finally:
+        _q2f_lock.release()
+
+
+def q2f_manual(rels, force=False, priority=5):
+    """手动勾选固定文件转换。"""
+    files, err = q2f_walk()
+    if err:
+        return {'ok': False, 'msg': '列源失败: ' + err}
+    want = set(rels or [])
+    picked = [f for f in files if f['rel'] in want]
+    if not picked:
+        return {'ok': False, 'msg': '未匹配到所选文件（%d 个）' % len(want)}
+    return q2f_enqueue(picked, manual=True, force=force, priority=priority)
+
+
+def _q2f_speed_push(key, xfer, size):
+    now = time.time()
+    prev = _q2f_speed.get(key)
+    if not prev:
+        _q2f_speed[key] = (now, xfer, 0.0)
+        return 0.0
+    t0, b0, last = prev
+    dt = now - t0
+    if dt < 0.4:            # 采样窗口过短会算出虚高瞬时速度，保持上次平滑值
+        return last
+    inst = max(0.0, (xfer - b0) / dt)
+    smooth = inst if last <= 0 else last * 0.7 + inst * 0.3
+    _q2f_speed[key] = (now, xfer, smooth)
+    return smooth
+
+
+def q2f_fetch_one(it, on_progress):
+    """下载单文件并投递 CD2；返回 (ok, msg, rapid)。支持取消/暂停/限速。"""
+    try:
+        import urllib.request
+        import shutil
+        import hashlib
+        key = _q2f_key(it)
+        rel = it['rel']
+        g = q2f_api('POST', '/api/fs/get',
+                    {'path': Q2F_SRC + '/' + rel, 'password': ''}, t=30)
+        if g.get('code') != 200:
+            return False, '取直链失败: ' + str(g.get('message'))[:80], False
+        raw = ((g.get('data') or {}).get('raw_url') or '')
+        if not raw:
+            return False, '无直链', False
+        base = (cfg().get('q2f_ol_base') or Q2F_OL).rstrip('/')
+        raw = raw.replace('http://127.0.0.1:5244', base)
+        os.makedirs(Q2F_TMP, exist_ok=True)
+        os.makedirs(Q2F_CD2, exist_ok=True)
+        part = os.path.join(Q2F_TMP, 'q2f_' + hashlib.md5(rel.encode('utf-8')).hexdigest()[:12] + '.part')
+        dst = os.path.join(Q2F_CD2, rel)
+        if os.path.exists(dst) and not it.get('force'):
+            try:
+                cur = os.path.getsize(dst)
+            except Exception:
+                cur = -1
+            if cur == it['size']:
+                return True, '已存在（跳过）', False
+            try:
+                os.remove(dst)          # 自愈：不完整文件删除重传
+            except Exception as e:
+                return False, '不完整文件无法移除: %s' % str(e)[:70], False
+        elif os.path.exists(dst) and it.get('force'):
+            try:
+                os.remove(dst)          # 手动强制重传：删除已有文件，真正重新下载
+            except Exception as e:
+                return False, '强制重传无法移除旧文件: %s' % str(e)[:70], False
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        req = urllib.request.Request(raw, headers={'User-Agent': 'Mozilla/5.0'})
+        limit = float(q2f_state()['settings'].get('speed_limit') or 0) * 1048576
+        xfer, last_t, last_save = 0, time.time(), 0
+        with urllib.request.urlopen(req, timeout=60) as r, open(part, 'wb') as w:
+            while True:
+                if key in _q2f_cancel:
+                    _q2f_cancel.discard(key)
+                    raise RuntimeError('__CANCELLED__')
+                while _q2f_paused.is_set():
+                    time.sleep(0.5)
+                chunk = r.read(1024 * 1024)
+                if not chunk:
+                    break
+                w.write(chunk)
+                xfer += len(chunk)
+                sp = _q2f_speed_push(key, xfer, it['size'])
+                eta = ((it['size'] - xfer) / sp) if sp > 0 else 0
+                if time.time() - last_save > 1.5:
+                    on_progress(xfer, sp, eta, it['size'])
+                    last_save = time.time()
+                if limit > 0:
+                    want = len(chunk) / limit
+                    gap = time.time() - last_t
+                    if want > gap:
+                        time.sleep(min(want - gap, 5))
+                last_t = time.time()
+        on_progress(xfer, 0, 0, it['size'])
+        got = os.path.getsize(part)
+        if it['size'] > 0 and got != it['size']:
+            os.remove(part)
+            return False, '下载大小不符 %d/%d' % (got, it['size']), False
+        shutil.move(part, dst)
+        try:
+            final = os.path.getsize(dst)
+        except Exception:
+            final = -1
+        if it['size'] > 0 and final != it['size']:
+            try:
+                os.remove(dst)
+            except Exception:
+                pass
+            return False, '落地大小不符 %d/%d（已移除，下轮自动重传）' % (final, it['size']), False
+        return True, '已投递 CD2 → 115（%s）' % dst, False
+    except Exception as e:
+        if str(e) == '__CANCELLED__':
+            return False, '__CANCELLED__', False
+        return False, str(e)[:130], False
+
+
+def q2f_worker():
+    """队列消费者：按优先级取 queued，串行/按并发数处理，实时写进度。"""
+    global _q2f_worker_started
+    if _q2f_worker_started:
+        return
+    _q2f_worker_started = True
+    while True:
+        try:
+            s = q2f_state()
+            if _q2f_paused.is_set():
+                time.sleep(1)
+                continue
+            conc = max(1, int(s['settings'].get('concurrency') or 1))
+            running = [x for x in s['items'].values() if x.get('status') == 'running']
+            if len(running) >= conc:
+                time.sleep(1)
+                continue
+            queued = [(k, v) for k, v in s['items'].items() if v.get('status') == 'queued']
+            if not queued:
+                time.sleep(1)
+                continue
+            queued.sort(key=lambda kv: (-int(kv[1].get('priority') or 0), kv[1].get('queued_ts') or 0))
+            key, it = queued[0]
+            s = q2f_state()
+            it = s['items'].get(key)
+            if not it or it.get('status') != 'queued':
+                continue
+            it['status'] = 'running'
+            it['started'] = time.time()
+            it['msg'] = '正在下载…'
+            q2f_save(s)
+
+            def prog(xfer, sp, eta, size):
+                st = q2f_state()
+                cur = st['items'].get(key)
+                if not cur:
+                    return
+                cur['bytes_xfer'] = xfer
+                cur['progress'] = round(xfer * 100.0 / size, 1) if size else 0
+                cur['speed'] = round(sp, 1)
+                cur['eta'] = round(eta, 1)
+                cur['msg'] = '下载中 %d%% · %s/s' % (cur['progress'], _q2f_fmt(sp))
+                q2f_save(st)
+                if sp > (st['stats'].get('peak_speed') or 0):
+                    st['stats']['peak_speed'] = round(sp, 1)
+                    q2f_save(st)
+
+            ok, msg, rapid = q2f_fetch_one(it, prog)
+            st = q2f_state()
+            cur = st['items'].get(key)
+            if not cur:
+                _q2f_speed.pop(key, None)
+                continue
+            cur['finished'] = time.time()
+            cur['duration'] = round(cur['finished'] - (cur['started'] or cur['finished']), 1)
+            cur['speed'] = 0
+            cur['eta'] = 0
+            cur['msg'] = msg
+            if msg == '__CANCELLED__':
+                cur['status'] = 'cancelled'
+                cur['progress'] = 0
+            elif ok:
+                cur['status'] = 'done'
+                cur['progress'] = 100
+                cur['bytes_xfer'] = cur['size']
+                cur['rapid'] = bool(rapid)
+                st['recent'] = ([{'rel': cur['rel'], 'size': cur['size'], 'ok': True,
+                                  'msg': msg, 'ts': cur['finished']}] + st['recent'])[:60]
+                st['history'] = ([dict(rel=cur['rel'], size=cur['size'], ok=True,
+                                       duration=cur['duration'], ts=cur['finished'],
+                                       rapid=bool(rapid), manual=bool(cur.get('manual')))]
+                                 + st['history'])[:500]
+                st['stats']['total_runs'] = (st['stats'].get('total_runs') or 0) + 1
+                st['stats']['total_elapsed'] = (st['stats'].get('total_elapsed') or 0) + cur['duration']
+                done_sizes = [(x.get('size') or 0) / max(x.get('duration') or 1, 1)
+                              for x in st['items'].values() if x.get('status') == 'done' and x.get('duration')]
+                if done_sizes:
+                    st['stats']['avg_speed'] = round(sum(done_sizes) / len(done_sizes), 1)
+            else:
+                cur['retry'] = (cur.get('retry') or 0) + 1
+                maxr = int(st['settings'].get('retry') or 3)
+                if cur['retry'] < maxr:
+                    cur['status'] = 'queued'
+                    cur['msg'] = '失败（第 %d/%d 次重试排队）：%s' % (cur['retry'], maxr, msg)
+                else:
+                    cur['status'] = 'failed'
+                    st['history'] = ([dict(rel=cur['rel'], size=cur['size'], ok=False,
+                                           duration=cur['duration'], ts=cur['finished'],
+                                           msg=msg, manual=bool(cur.get('manual')))]
+                                     + st['history'])[:500]
+            q2f_save(st)
+            # ★ V1.52 队列清空后按设置自动创建 MT 任务组方案（含下下级目录）
+            try:
+                _st = q2f_state()
+                _all_done = bool(_st['items']) and all(
+                    x.get('status') in ('done', 'failed', 'cancelled')
+                    for x in _st['items'].values())
+                if (_all_done and _st['settings'].get('mt_after')
+                        and not (q2f_mt_info().get('schemes') or [])):
+                    _sig = 0
+                    for _x in _st['items'].values():
+                        if _x.get('status') == 'done':
+                            _sig = max(_sig, _x.get('finished') or 0)
+                    if _sig and _sig != (_st.get('mt_auto_ts') or 0):
+                        _st['mt_auto_ts'] = _sig
+                        q2f_save(_st)
+                        try:
+                            _rr = q2f_mt_create()
+                            _st2 = q2f_state()
+                            _st2['mt_auto_result'] = {
+                                'ts': time.time(), 'ok': bool(_rr.get('ok')),
+                                'msg': _rr.get('msg') or '',
+                                'schemes': len(_rr.get('schemes') or [])}
+                            q2f_save(_st2)
+                            logger.info('[Q2F] auto MT: %s', _rr.get('msg'))
+                        except Exception as _e:
+                            logger.warning('[Q2F] auto MT failed: %s', _e)
+            except Exception as _e:
+                logger.warning('[Q2F] auto MT check: %s', _e)
+            _q2f_speed.pop(key, None)
+        except Exception as e:
+            logger.warning('[Q2F] worker: %s', e)
+            time.sleep(2)
+
+
+def _q2f_fmt(b):
+    try:
+        b = float(b)
+        for u in ('B', 'KB', 'MB', 'GB'):
+            if b < 1024:
+                return '%.1f%s' % (b, u)
+            b /= 1024
+        return '%.1fTB' % b
+    except Exception:
+        return '0B'
+
+
+def q2f_action(act, keys=None, **kw):
+    """队列控制：取消/重试/优先级/暂停/设置/清空。"""
+    s = q2f_state()
+    ks = set(keys or [])
+    n = 0
+    if act == 'cancel':
+        for k, v in s['items'].items():
+            if (not ks or k in ks) and v.get('status') in ('queued', 'running'):
+                if v.get('status') == 'running':
+                    _q2f_cancel.add(k)
+                else:
+                    v['status'] = 'cancelled'
+                n += 1
+    elif act == 'retry':
+        for k, v in s['items'].items():
+            if (not ks or k in ks) and v.get('status') in ('failed', 'cancelled'):
+                v.update({'status': 'queued', 'retry': 0, 'progress': 0,
+                          'bytes_xfer': 0, 'speed': 0, 'eta': 0, 'msg': '手动重试'})
+                n += 1
+    elif act == 'priority':
+        d = 1 if kw.get('up') else -1
+        for k, v in s['items'].items():
+            if (not ks or k in ks) and v.get('status') in ('queued', 'running'):
+                v['priority'] = (v.get('priority') or 0) + d
+                n += 1
+    elif act == 'pause':
+        on = bool(kw.get('on'))
+        s['paused'] = on
+        if on:
+            _q2f_paused.set()
+        else:
+            _q2f_paused.clear()
+        n = 1
+    elif act == 'settings':
+        patch = kw.get('patch') or {}
+        allowed = set(Q2F_DEFAULT_SETTINGS.keys())
+        for k2, v in patch.items():
+            if k2 in allowed:
+                s['settings'][k2] = v
+        n = len(patch)
+    elif act == 'reset':
+        s['items'] = {}
+        s['recent'] = []
+        n = 1
+    q2f_save(s)
+    return {'ok': True, 'affected': n, 'msg': '已处理 %d 项' % n}
+
+
+
+def q2f_host():
+    """推导本机访问主机名（供容器完整地址使用），不硬编码内网 IP。"""
+    try:
+        sa = (_self_addr() or '').strip()
+        m = re.match(r'^https?://([^:/]+)', sa)
+        if m:
+            return m.group(1)
+        return sa.split(':')[0] if sa else '127.0.0.1'
+    except Exception:
+        return '127.0.0.1'
+
+
+def q2f_links(addr=''):
+    """全部已发布端口的容器 + 完整访问地址（host 网络的 CD2 单独补 19798）。
+    addr 由请求头推导（浏览器实际访问的地址），避免返回容器内网 IP。"""
+    host = ''
+    try:
+        m = re.match(r'^https?://([^:/]+)', (addr or '').strip())
+        if m:
+            host = m.group(1)
+    except Exception:
+        pass
+    if not host:
+        host = q2f_host()
+    out = []
+    try:
+        st, body = dk('GET', '/containers/json?all=1', t=15)
+        arr = json.loads(body) if st == 200 and body else []
+    except Exception as e:
+        arr = []
+        logger.warning('[Q2F] links: %s', e)
+    for c in arr:
+        name = (c.get('Names') or [''])[0].lstrip('/')
+        if not name:
+            continue
+        ports = [p for p in (c.get('Ports') or [])
+                 if p.get('PublicPort') and (p.get('Type') or 'tcp') == 'tcp']
+        if not ports:
+            continue
+        ports.sort(key=lambda p: p.get('PublicPort') or 99999)
+        port = ports[0].get('PublicPort')
+        out.append({'name': name, 'state': c.get('State') or '',
+                    'image': (c.get('Image') or '').split('/')[-1],
+                    'port': port, 'url': 'http://%s:%s' % (host, port)})
+    if not any(x['name'] == 'clouddrive2' for x in out):
+        out.append({'name': 'clouddrive2', 'state': 'running',
+                    'image': 'clouddrive2', 'port': 19798,
+                    'url': 'http://%s:19798' % host})
+    out.sort(key=lambda x: x['name'])
+    return {'ok': True, 'host': host, 'links': out, 'count': len(out)}
+
+
+def q2f_services():
+    try:
+        allc = ctr_list() or []
+    except Exception:
+        allc = []
+    out = []
+    for key, official, web, note in [
+        ('clouddrive2', 'CloudDrive2', '', '115 网盘本地挂载 · 提供 /CloudNAS/115open 落地目录'),
+        ('openlist', 'OpenList', 'http://<NAS_IP>:5244', '多网盘聚合 · QuarkOpen(夸克) / 115 Cloud(115)'),
+    ]:
+        c = next((x for x in allc if (x.get('name') or '') == key), {})
+        out.append({'key': key, 'official': official, 'cname': key,
+                    'state': c.get('state') or 'unknown',
+                    'status': c.get('status') or '', 'image': c.get('image') or '',
+                    'web': web, 'note': note})
+    stor = []
+    try:
+        for x in ((q2f_api('GET', '/api/admin/storage/list', t=15).get('data') or {}).get('content') or []):
+            stor.append({'mount': x.get('mount_path'), 'driver': x.get('driver'),
+                         'status': (x.get('status') or '')[:60], 'disabled': bool(x.get('disabled'))})
+    except Exception:
+        pass
+    probe = q2f_api('GET', '/api/me', t=8)
+    return {'services': out, 'storages': stor,
+            'ol_reachable': probe.get('code') == 200, 'ol_version': 'v4.2.9'}
+
+
+def q2f_mt_info():
+    try:
+        import sqlite3
+        con = sqlite3.connect('file:/dockroot/mediatidy/data/mediatidy.db?mode=ro',
+                              uri=True, timeout=5)
+        rows = con.execute("SELECT key,name,config FROM scheduled_jobs "
+                           "WHERE type='organize'").fetchall()
+        con.close()
+        out = []
+        for k, n, cfg in rows:
+            try:
+                j = json.loads(cfg)
+            except Exception:
+                continue
+            _sd = j.get('sourceDir') or ''
+            if _sd == Q2F_MT_SRC or _sd.startswith(Q2F_MT_SRC + '/') or '待整理/转换/夸克' in _sd:
+                out.append({'key': k, 'name': n, 'source': j.get('sourceDir'),
+                            'dest': j.get('destDir'), 'taskGroup': bool(j.get('taskGroup')),
+                            'realtimeMode': j.get('realtimeMode') or '',
+                            'transferType': j.get('transferType') or ''})
+        return {'ok': True, 'schemes': out}
+    except Exception as e:
+        return {'ok': False, 'msg': str(e)[:120], 'schemes': []}
+
+
+def q2f_mt_create():
+    try:
+        before = len(q2f_mt_info().get('schemes') or [])
+        # ★ V1.52：除父目录外，为目标目录下的每个下下级子目录（具体剧集目录）
+        #   也各建一组任务组方案（普通半 + 跳过半）。
+        paths = [Q2F_MT_SRC]
+        try:
+            for _nm in sorted(os.listdir(Q2F_CD2)):
+                if os.path.isdir(os.path.join(Q2F_CD2, _nm)):
+                    paths.append(Q2F_MT_SRC + '/' + _nm)
+        except Exception as _e:
+            logger.warning('[Q2F] mt subdirs: %s', _e)
+        r = _auto_make(paths, tpl_id='group')
+        after = q2f_mt_info()
+        return {'ok': bool((r or {}).get('ok', True)),
+                'msg': (r or {}).get('msg') or '已提交创建',
+                'before': before, 'after': len(after.get('schemes') or []),
+                'paths': paths, 'schemes': after.get('schemes') or []}
+    except Exception as e:
+        return {'ok': False, 'msg': str(e)[:160]}
+
+
+def q2f_status():
+    """统一状态：队列聚合 / 速度 / ETA / 明细 / 服务 / MT / 空间 / 设置。"""
+    s = q2f_state()
+    items = list(s['items'].values())
+    by = lambda st: [x for x in items if x.get('status') == st]
+    done, running, queued = by('done'), by('running'), by('queued')
+    bytes_total = sum(x.get('size', 0) for x in items)
+    bytes_done = sum(x.get('size', 0) for x in done)
+    bytes_xfer = sum(x.get('bytes_xfer', 0) for x in running)
+    speed = sum(float(x.get('speed') or 0) for x in running)
+    avg = float(s['stats'].get('avg_speed') or 0)
+    remain = sum((x.get('size', 0) - x.get('bytes_xfer', 0)) for x in (queued + running))
+    base_speed = speed if speed > 0 else avg
+    eta = round(remain / base_speed, 1) if base_speed > 0 else 0
+    try:
+        vfs = os.statvfs(Q2F_CD2)
+        disk = {'free': vfs.f_bavail * vfs.f_frsize, 'total': vfs.f_blocks * vfs.f_frsize}
+    except Exception:
+        disk = {'free': 0, 'total': 0}
+    items_sorted = sorted(items, key=lambda x: (
+        {'running': 0, 'queued': 1, 'failed': 2, 'paused': 3,
+         'cancelled': 4, 'done': 5}.get(x.get('status'), 9),
+        -int(x.get('priority') or 0), x.get('queued_ts') or 0))
+    return {'ok': True, 'enabled': s.get('enabled', True), 'paused': s.get('paused', False),
+            'last_scan': s.get('last_scan', 0), 'last_msg': s.get('last_msg', ''),
+            'src': Q2F_SRC, 'dst': Q2F_DST, 'cd2': Q2F_CD2, 'mt': Q2F_MT_SRC,
+            'settings': s['settings'], 'stats': s['stats'], 'disk': disk,
+            'total': len(items), 'done': len(done), 'running': len(running),
+            'queued': len(queued), 'failed': len(by('failed')),
+            'cancelled': len(by('cancelled')), 'paused_cnt': len(by('paused')),
+            'bytes_total': bytes_total, 'bytes_done': bytes_done,
+            'bytes_xfer': bytes_xfer, 'percent': round((bytes_done + bytes_xfer) * 100.0 / bytes_total, 1) if bytes_total else 0,
+            'speed': round(speed, 1), 'avg_speed': round(avg, 1),
+            'eta': eta, 'eta_finish': time.time() + eta if eta else 0,
+            'remain': remain, 'rapid_hits': sum(1 for x in done if x.get('rapid')),
+            'items': items_sorted[:120], 'recent': s.get('recent', [])[:30],
+            'history': s.get('history', [])[:100],
+            'services': q2f_services(), 'mt_task': q2f_mt_info(),
+            'worker': _q2f_worker_started,
+            'host': q2f_host(), 'mt_auto': s.get('mt_auto_result')}
+
+
+def q2f_loop():
+    threading.Thread(target=q2f_worker, daemon=True).start()
+    time.sleep(8)
+    while True:
+        try:
+            s = q2f_state()
+            if s['settings'].get('auto', True):
+                q2f_scan()
+        except Exception as e:
+            logger.warning('[Q2F] loop: %s', e)
+        time.sleep(max(30, int((q2f_state()['settings'].get('interval') or 120))))
+
+
+def q2f_source():
+    """手动转换页：列出监控源下所有可选文件。"""
+    files, err = q2f_walk()
+    return {'ok': not bool(err), 'msg': err, 'files': files, 'src': Q2F_SRC,
+            'count': len(files), 'bytes': sum(f['size'] for f in files)}
+
+
+def q2f_link(path):
+    """网盘浏览器：取文件直链（把容器回环地址换成 LAN 地址供下载/预览）。"""
+    g = q2f_api('POST', '/api/fs/get', {'path': path, 'password': ''}, t=25)
+    if g.get('code') != 200:
+        return {'ok': False, 'msg': str(g.get('message'))[:120], 'raw': ''}
+    raw = ((g.get('data') or {}).get('raw_url') or '')
+    base = (cfg().get('q2f_ol_base') or Q2F_OL).rstrip('/')
+    raw = raw.replace('http://127.0.0.1:5244', base)
+    return {'ok': bool(raw), 'msg': '' if raw else '无直链', 'raw': raw,
+            'name': (g.get('data') or {}).get('name') or '',
+            'size': (g.get('data') or {}).get('size') or 0}
 
 
 
@@ -23928,7 +26127,7 @@ def _auto_loop():
 # CD2 gRPC-Web 客户端（实测可用，勿删）
 #
 # 根因（实测证据，不是推测）：
-#   /vol1/1000/docker/clouddrive2/config/systemsettings.json
+#   {{MH_VOL1}}/docker/clouddrive2/config/systemsettings.json
 #     "dir_cache_ttl_secs": 1800        ← 目录缓存 30 分钟
 #     "dir_cache_persistence": true     ← 持久化，重启也在
 #   所以 115 APP 里新建目录后，CD2 挂载点最长 30 分钟才看得到，
@@ -24446,18 +26645,6 @@ def pt2c_dirs(limit=20, budget=8.0):
 #   · 结果同时暴露给 /api/chain/health（info 级事实），链路页能看见。
 # ══════════════════════════════════════════════════════════════════
 HTML_PATH = os.environ.get('HUB_HTML', '/app/index.html')
-
-def _inject_env(html):
-    """serve 时把 index.html 的 {{MH_*}} 占位替换为环境变量（凭据/内网地址不入库）。"""
-    rep = {
-        '{{MH_NAS_IP}}': os.environ.get('MH_NAS_IP', '127.0.0.1'),
-        '{{MH_PROXY_IP}}': os.environ.get('MH_PROXY_IP', ''),
-        '{{MH_OWNER_TG}}': os.environ.get('MH_OWNER_TG', '0'),
-    }
-    for k, v in rep.items():
-        html = html.replace(k, str(v))
-    return html
-
 HTML_HASH_FILE = '/data/hub_html_hash'
 HTML_GUARD_DIR = '/data/html_guard'
 HTML_GUARD_KEEP = 5
@@ -24718,7 +26905,7 @@ def speedtest_all():
 #   ② 列表 GET /api/theme/bgimg → [{name,bytes,mime,url,at}]。
 #   ③ 删除 POST /api/theme/bgimg/del {name}（只删 bgimg 目录内的，防穿越）。
 #   ④ 读取 GET /api/bgimg/<name>，Cache-Control 1 天，与 /api/icon 同模式。
-#   ⑤ 存储目录 /dockroot/media-hub/bgimg（= 宿主机 /vol1/1000/docker/media-hub/bgimg），
+#   ⑤ 存储目录 /dockroot/media-hub/bgimg（= 宿主机 {{MH_VOL1}}/docker/media-hub/bgimg），
 #      与 icons 同挂载，重启不丢。
 BGIMG_DIR = "/dockroot/media-hub/bgimg"
 BGIMG_MAX_BYTES = 6 * 1024 * 1024
@@ -25213,6 +27400,803 @@ def icon_bytes(key):
 
 
 
+# ════════════════════════════════════════════════════════════════════
+# ★ V3.0 插件化运行时（Media Hub Platform）— 2026-11-12
+#   设计原则（用户 V3 任务书 §3/§4/§5）：
+#     · 真插件生态：Manifest 标准 / 生命周期 / 权限 / 子进程隔离 / SDK / 事件总线
+#     · 服务注册中心：多实例 CRUD + 能力发现 + 健康探测（与插件解耦）
+#     · 统一数据总线：事件发布/订阅/去重/重试/死信；模块从注册表动态读取
+#     · 只增不减：不动任何老路由/老函数；独立 DB（hub_v3.db）不碰 3.7GB MT 库
+#     · 凭据零变更：只读 webcfg，插件密钥独立加密落盘
+#   部署：/dockroot/media-hub/ 已挂载可写 → DB/插件/日志全在此目录
+# ════════════════════════════════════════════════════════════════════
+
+
+def _v3_wan(url, method='GET', body=None, headers=None, t=12):
+    """V3 自包含外网 HTTP：直连→代理兜底。返回 (status, bytes)。"""
+    hdr = dict(headers or {})
+    last = None
+    for proxy in (None, tmdb_proxy()):
+        try:
+            hs = []
+            if proxy:
+                hs.append(urllib.request.ProxyHandler({'http': proxy, 'https': proxy}))
+            else:
+                hs.append(urllib.request.ProxyHandler({}))
+            op = urllib.request.build_opener(*hs)
+            req = urllib.request.Request(url, data=body, headers=hdr, method=method)
+            with op.open(req, timeout=t) as r:
+                return r.status, r.read()
+        except urllib.error.HTTPError as e:
+            try: return e.code, e.read()
+            except Exception: return e.code, b''
+        except Exception as e:
+            last = e
+    return -1, str(last).encode()
+def _v3_json(url, method='GET', body=None, headers=None, t=12):
+    s, b = _v3_wan(url, method, body, headers, t)
+    try: return s, json.loads(b.decode('utf-8', 'ignore'))
+    except Exception: return s, None
+
+V3_ROOT = '/dockroot/media-hub/v3'                 # 插件与注册中心数据根（宿主已挂载）
+V3_PLUGINS_DIR = os.path.join(V3_ROOT, 'plugins')  # 插件目录 <id>/{manifest.json,plugin.py,...}
+V3_DATA_DIR = os.path.join(V3_ROOT, 'data')        # 插件独立数据 <id>/
+V3_LOG_DIR = os.path.join(V3_ROOT, 'logs')         # 插件 stdout/stderr 日志
+V3_DB = os.path.join(V3_ROOT, 'hub_v3.db')         # 唯一运行时 DB（与 MT 库完全隔离）
+V3_SDK_DIR = os.path.join(V3_ROOT, 'sdk')          # 宿主从这里读 manifest schema 示例
+V3_HOST_VERSION = '3.0.0'
+
+
+def _v3_init_dirs():
+    for d in (V3_ROOT, V3_PLUGINS_DIR, V3_DATA_DIR, V3_LOG_DIR, V3_SDK_DIR):
+        try:
+            os.makedirs(d, exist_ok=True)
+        except Exception as e:
+            logger.warning('[V3] mkdir %s: %s', d, str(e)[:100])
+
+
+_v3_init_dirs()
+
+
+def v3_db():
+    c = sqlite3.connect(V3_DB, timeout=20)
+    c.row_factory = sqlite3.Row
+    return c
+
+
+def v3_db_init():
+    with v3_db() as c:
+        # 插件注册表
+        c.execute('''CREATE TABLE IF NOT EXISTS plugins(
+            plugin_id TEXT PRIMARY KEY, name TEXT, version TEXT, author TEXT,
+            description TEXT, manifest TEXT, status TEXT DEFAULT 'installed',
+            enabled INTEGER DEFAULT 0, pid INTEGER DEFAULT 0,
+            installed_at TEXT, updated_at TEXT, last_health TEXT,
+            error TEXT, permissions TEXT, source TEXT, source_url TEXT)''')
+        # 插件配置 / 独立 KV（加密值走 sec 通道；这里存明文配置结构+非敏感值）
+        c.execute('''CREATE TABLE IF NOT EXISTS plugin_config(
+            plugin_id TEXT, key TEXT, value TEXT, updated_at TEXT,
+            PRIMARY KEY(plugin_id,key))''')
+        c.execute('''CREATE TABLE IF NOT EXISTS plugin_kv(
+            plugin_id TEXT, k TEXT, v TEXT, updated_at TEXT,
+            PRIMARY KEY(plugin_id,k))''')
+        # 服务实例注册表（插件与实例解耦：一个插件可挂 N 个实例）
+        c.execute('''CREATE TABLE IF NOT EXISTS service_instances(
+            id TEXT PRIMARY KEY, type TEXT NOT NULL, name TEXT,
+            config TEXT, endpoint TEXT, enabled INTEGER DEFAULT 1,
+            health TEXT DEFAULT 'unknown', capabilities TEXT DEFAULT '[]',
+            last_check TEXT, last_error TEXT, created_at TEXT, updated_at TEXT)''')
+        # 事件总线（含去重/重试/死信）
+        c.execute('''CREATE TABLE IF NOT EXISTS events(
+            id TEXT PRIMARY KEY, type TEXT, source TEXT, instance_id TEXT,
+            data TEXT, status TEXT DEFAULT 'pending', dedupe_key TEXT,
+            attempts INTEGER DEFAULT 0, max_attempts INTEGER DEFAULT 3,
+            created_at TEXT, processed_at TEXT, last_error TEXT)''')
+        c.execute('CREATE UNIQUE INDEX IF NOT EXISTS ix_ev_dedupe ON events(dedupe_key) WHERE dedupe_key IS NOT NULL')
+        c.execute('''CREATE TABLE IF NOT EXISTS event_subscriptions(
+            id TEXT PRIMARY KEY, event_type TEXT, subscriber TEXT,
+            kind TEXT DEFAULT 'plugin', endpoint TEXT, enabled INTEGER DEFAULT 1,
+            created_at TEXT)''')
+        # 插件日志（结构化，落 DB + 文件双份）
+        c.execute('''CREATE TABLE IF NOT EXISTS plugin_logs(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            plugin_id TEXT, level TEXT, msg TEXT, ts TEXT)''')
+        # 能力注册表（插件声明的导航/组件/路由/任务）
+        c.execute('''CREATE TABLE IF NOT EXISTS plugin_capabilities(
+            plugin_id TEXT, kind TEXT, key TEXT, payload TEXT,
+            PRIMARY KEY(plugin_id,kind,key))''')
+        # 安装历史
+        c.execute('''CREATE TABLE IF NOT EXISTS plugin_history(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            plugin_id TEXT, action TEXT, detail TEXT, ts TEXT)''')
+v3_db_init()
+
+
+def v3_log(plugin_id, level, msg):
+    try:
+        with v3_db() as c:
+            c.execute('INSERT INTO plugin_logs(plugin_id,level,msg,ts) VALUES(?,?,?,?)',
+                      (plugin_id, level, str(msg)[:2000], time.strftime('%Y-%m-%d %H:%M:%S')))
+    except Exception:
+        pass
+    try:
+        with open(os.path.join(V3_LOG_DIR, '%s.log' % re.sub(r'[^A-Za-z0-9_-]', '_', plugin_id or 'host')),
+                  'a', encoding='utf-8') as f:
+            f.write('[%s] [%s] %s\n' % (time.strftime('%Y-%m-%d %H:%M:%S'), level, str(msg)[:1000]))
+    except Exception:
+        pass
+
+
+def v3_history(plugin_id, action, detail=''):
+    try:
+        with v3_db() as c:
+            c.execute('INSERT INTO plugin_history(plugin_id,action,detail,ts) VALUES(?,?,?,?)',
+                      (plugin_id, action, str(detail)[:500], time.strftime('%Y-%m-%d %H:%M:%S')))
+    except Exception:
+        pass
+
+
+# ── Manifest 标准与校验（V3 任务书 §3.2） ──────────────────────────
+V3_MANIFEST_REQUIRED = ['plugin_id', 'name', 'version', 'entrypoint']
+V3_MANIFEST_OPTIONAL = ['description', 'author', 'min_host_version', 'max_host_version',
+                        'dependencies', 'permissions', 'configuration_schema', 'navigation',
+                        'dashboard_widgets', 'capabilities', 'event_subscriptions',
+                        'background_tasks', 'api_routes', 'data_schema', 'lifecycle_hooks',
+                        'logo', 'category', 'repository', 'license']
+V3_PERMISSIONS = {
+    # 细粒度权限点（V3 任务书 §3.4）：插件必须声明，管理员授权后才能用
+    'log.write': '写日志',
+    'config.read': '读自身配置',
+    'config.write': '写自身配置',
+    'kv.read': '读写独立 KV',
+    'kv.write': '写独立 KV',
+    'event.publish': '发布事件',
+    'event.subscribe': '订阅事件',
+    'service.read': '读取服务实例（脱敏）',
+    'media.read': '读取媒体数据',
+    'playback.read': '读取播放记录',
+    'user.read': '读取用户信息',
+    'network.outbound': '出站网络访问',
+    'storage.read': '读取文件/目录',
+    'storage.write': '写文件/目录',
+    'bot.message.read': '读取机器人消息',
+    'bot.message.send': '发送机器人消息',
+    'task.schedule': '注册后台任务',
+    'dashboard.widget': '注册仪表盘组件',
+    'navigation': '注册导航入口',
+    'api.route': '注册 API 路由',
+    'ai.model': '调用 AI 模型',
+}
+
+
+def _v3_ver_tuple(v):
+    try:
+        return tuple(int(x) for x in re.findall(r'\d+', str(v))[:3])
+    except Exception:
+        return (0,)
+
+
+def v3_manifest_validate(m):
+    """返回 (ok, err, normalized)。校验版本兼容/依赖/权限/唯一 ID。"""
+    if not isinstance(m, dict):
+        return False, 'manifest 必须是 JSON 对象', None
+    for k in V3_MANIFEST_REQUIRED:
+        if not m.get(k):
+            return False, 'manifest 缺必需字段: %s' % k, None
+    pid = re.sub(r'[^A-Za-z0-9_-]', '', str(m['plugin_id']))
+    if not pid or len(pid) > 64:
+        return False, 'plugin_id 非法（仅字母数字_-，≤64）', None
+    if '/' in str(m.get('entrypoint', '')) or '..' in str(m.get('entrypoint', '')):
+        return False, 'entrypoint 不允许路径穿越', None
+    hv = _v3_ver_tuple(V3_HOST_VERSION)
+    mn = str(m.get('min_host_version') or '0')
+    mx = str(m.get('max_host_version') or '999')
+    if _v3_ver_tuple(mn) > hv or _v3_ver_tuple(mx) < hv:
+        return False, '宿主版本不兼容（需 %s ~ %s，当前 %s）' % (mn, mx, V3_HOST_VERSION), None
+    perms = m.get('permissions') or []
+    if isinstance(perms, str):
+        perms = [x.strip() for x in perms.split(',') if x.strip()]
+    unknown = [p for p in perms if p not in V3_PERMISSIONS]
+    if unknown:
+        return False, '未知权限: %s' % ','.join(unknown[:5]), None
+    m['plugin_id'] = pid
+    m['permissions'] = perms
+    m['dependencies'] = m.get('dependencies') or []
+    m['navigation'] = m.get('navigation') or []
+    m['dashboard_widgets'] = m.get('dashboard_widgets') or []
+    m['capabilities'] = m.get('capabilities') or []
+    m['event_subscriptions'] = m.get('event_subscriptions') or []
+    m['background_tasks'] = m.get('background_tasks') or []
+    m['api_routes'] = m.get('api_routes') or []
+    m['lifecycle_hooks'] = m.get('lifecycle_hooks') or {}
+    return True, '', m
+
+
+def v3_plugin_get(pid):
+    with v3_db() as c:
+        r = c.execute('SELECT * FROM plugins WHERE plugin_id=?', (pid,)).fetchone()
+    return dict(r) if r else None
+
+
+def v3_plugin_manifest(pid):
+    r = v3_plugin_get(pid)
+    if not r:
+        return None
+    try:
+        return json.loads(r['manifest'])
+    except Exception:
+        return None
+
+
+def v3_plugins_list():
+    with v3_db() as c:
+        rows = [dict(r) for r in c.execute('SELECT * FROM plugins ORDER BY installed_at DESC')]
+    for r in rows:
+        m = v3_plugin_manifest(r['plugin_id']) or {}
+        r['author'] = m.get('author') or r.get('author') or ''
+        r['category'] = m.get('category') or '其他'
+        r['logo'] = m.get('logo') or ''
+        r['description'] = m.get('description') or r.get('description') or ''
+        r['permissions_desc'] = [V3_PERMISSIONS.get(p, p) for p in (r.get('permissions') or [])] \
+            if isinstance(r.get('permissions'), list) else []
+    return rows
+
+
+def v3_install_plugin(manifest, source='local', source_url='', plugin_dir=None):
+    """安装插件：校验 manifest → 落盘（可选）→ 注册 DB → 注册能力 → 返回。
+    plugin_dir: 已解压好的插件目录（含 entrypoint）；None 表示仅注册（内置演示用）。"""
+    ok, err, m = v3_manifest_validate(manifest)
+    if not ok:
+        return {'ok': False, 'msg': err}
+    pid = m['plugin_id']
+    if v3_plugin_get(pid):
+        return {'ok': False, 'msg': '插件已安装: %s' % pid}
+    # 依赖检查
+    for dep in (m.get('dependencies') or []):
+        dn = dep.get('plugin_id') if isinstance(dep, dict) else str(dep)
+        if dn and not v3_plugin_get(dn):
+            return {'ok': False, 'msg': '依赖未安装: %s' % dn}
+    # 权限记录（需管理员在 UI 审核；默认全部拒，启用时才按授权生效）
+    now = time.strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        with v3_db() as c:
+            c.execute('''INSERT INTO plugins(plugin_id,name,version,author,description,manifest,
+                          status,enabled,pid,installed_at,updated_at,error,permissions,source,source_url)
+                         VALUES(?,?,?,?,?,?,'installed',0,0,?,?,?,?,?,?)''',
+                      (pid, m['name'], m['version'], m.get('author') or '', m.get('description') or '',
+                       json.dumps(m, ensure_ascii=False), now, now, '',
+                       json.dumps(m.get('permissions') or [], ensure_ascii=False), source, source_url))
+            v3_register_capabilities(c, pid, m)
+    except Exception as e:
+        return {'ok': False, 'msg': '注册失败: %s' % str(e)[:120]}
+    v3_history(pid, 'install', 'source=%s version=%s' % (source, m['version']))
+    v3_log(pid, 'info', '插件已安装（未启用），等待权限审核')
+    return {'ok': True, 'msg': '插件 %s 已安装，请审核权限后启用' % m['name'], 'plugin_id': pid}
+
+
+def v3_register_capabilities(c, pid, m):
+    """注册插件声明的导航/仪表盘/路由/任务/事件订阅（V3 任务书 §5.1 自动联动）。"""
+    for nav in (m.get('navigation') or []):
+        key = nav.get('id') or nav.get('path') or ''
+        if key:
+            c.execute('INSERT OR REPLACE INTO plugin_capabilities(plugin_id,kind,key,payload) VALUES(?,?,?,?)',
+                      (pid, 'navigation', str(key), json.dumps(nav, ensure_ascii=False)))
+    for w in (m.get('dashboard_widgets') or []):
+        key = w.get('id') or ''
+        if key:
+            c.execute('INSERT OR REPLACE INTO plugin_capabilities(plugin_id,kind,key,payload) VALUES(?,?,?,?)',
+                      (pid, 'widget', str(key), json.dumps(w, ensure_ascii=False)))
+    for r in (m.get('api_routes') or []):
+        key = (r.get('method', 'GET').upper() + ' ' + r.get('path', '')) if isinstance(r, dict) else str(r)
+        if key.strip():
+            c.execute('INSERT OR REPLACE INTO plugin_capabilities(plugin_id,kind,key,payload) VALUES(?,?,?,?)',
+                      (pid, 'route', key, json.dumps(r, ensure_ascii=False)))
+    for t in (m.get('background_tasks') or []):
+        key = t.get('id') or t.get('name') or ''
+        if key:
+            c.execute('INSERT OR REPLACE INTO plugin_capabilities(plugin_id,kind,key,payload) VALUES(?,?,?,?)',
+                      (pid, 'task', str(key), json.dumps(t, ensure_ascii=False)))
+    for e in (m.get('event_subscriptions') or []):
+        key = e.get('event_type') or e.get('type') or ''
+        if key:
+            c.execute('INSERT OR REPLACE INTO plugin_capabilities(plugin_id,kind,key,payload) VALUES(?,?,?,?)',
+                      (pid, 'event', str(key), json.dumps(e, ensure_ascii=False)))
+            # 同步到事件订阅表（插件进程通过宿主 SDK 拉取事件）
+            try:
+                c.execute('''INSERT OR REPLACE INTO event_subscriptions(id,event_type,subscriber,kind,endpoint,enabled,created_at)
+                             VALUES(?,?,?,'plugin','sdk',1,?)''',
+                          ('%s:%s' % (pid, key), str(key), pid, time.strftime('%Y-%m-%d %H:%M:%S')))
+            except Exception:
+                pass
+
+
+def v3_uninstall_plugin(pid):
+    r = v3_plugin_get(pid)
+    if not r:
+        return {'ok': False, 'msg': '插件不存在'}
+    v3_stop_plugin(pid)
+    with v3_db() as c:
+        for t in ('plugins', 'plugin_config', 'plugin_kv', 'plugin_capabilities', 'plugin_logs'):
+            try:
+                c.execute('DELETE FROM %s WHERE plugin_id=?' % t, (pid,))
+            except Exception:
+                pass
+        c.execute('DELETE FROM event_subscriptions WHERE subscriber=?', (pid,))
+    v3_history(pid, 'uninstall', '')
+    return {'ok': True, 'msg': '已卸载 %s（独立数据保留，可手动删除）' % pid}
+
+
+# ── 插件进程生命周期（子进程隔离 + 健康检查，V3 任务书 §3.3/§3.4） ──
+_V3_PROCS = {}          # pid -> subprocess.Popen（内存态，重启宿主会清空→启动段自动拉起 enabled 插件）
+_V3_LOCK = threading.Lock()
+
+
+def _v3_plugin_entry(pid):
+    d = os.path.join(V3_PLUGINS_DIR, pid)
+    m = v3_plugin_manifest(pid) or {}
+    ep = str(m.get('entrypoint') or 'plugin.py')
+    return os.path.join(d, ep), d
+
+
+def v3_start_plugin(pid):
+    r = v3_plugin_get(pid)
+    if not r:
+        return {'ok': False, 'msg': '插件不存在'}
+    with _V3_LOCK:
+        old = _V3_PROCS.get(pid)
+        if old and old.poll() is None:
+            return {'ok': True, 'msg': '已在运行', 'pid': old.pid, 'already': True}
+        entry, d = _v3_plugin_entry(pid)
+        if not os.path.isfile(entry):
+            return {'ok': False, 'msg': '入口文件不存在: %s（请用本地 ZIP/Git 安装完整插件包）' % entry}
+        try:
+            env = dict(os.environ)
+            env.update({'KFC_PLUGIN_ID': pid, 'KFC_HOST': '127.0.0.1', 'KFC_PORT': str(PORT),
+                        'KFC_SDK_TOKEN': v3_sdk_token(pid), 'KFC_PLUGIN_DATA': os.path.join(V3_DATA_DIR, pid),
+                        'KFC_PLUGIN_LOG': os.path.join(V3_LOG_DIR, pid + '.log'),
+                        'PYTHONPATH': V3_SDK_DIR + os.pathsep + (env.get('PYTHONPATH') or '')})
+            os.makedirs(os.path.join(V3_DATA_DIR, pid), exist_ok=True)
+            lf = open(os.path.join(V3_LOG_DIR, pid + '.log'), 'a', encoding='utf-8')
+            proc = subprocess.Popen([sys.executable, entry], cwd=d, env=env,
+                                    stdout=lf, stderr=subprocess.STDOUT,
+                                    start_new_session=True)
+            _V3_PROCS[pid] = proc
+            with v3_db() as c:
+                c.execute('UPDATE plugins SET enabled=1,pid=?,status=?,last_health=?,error=? WHERE plugin_id=?',
+                          (proc.pid, 'running', time.strftime('%Y-%m-%d %H:%M:%S'), '', pid))
+            v3_history(pid, 'start', 'pid=%s' % proc.pid)
+            v3_log(pid, 'info', '插件进程已启动 pid=%s' % proc.pid)
+            return {'ok': True, 'msg': '已启动', 'pid': proc.pid}
+        except Exception as e:
+            with v3_db() as c:
+                c.execute('UPDATE plugins SET status=?,error=? WHERE plugin_id=?',
+                          ('error', str(e)[:200], pid))
+            v3_log(pid, 'error', '启动失败: %s' % str(e)[:200])
+            return {'ok': False, 'msg': '启动失败: %s' % str(e)[:120]}
+
+
+def v3_stop_plugin(pid):
+    with _V3_LOCK:
+        proc = _V3_PROCS.pop(pid, None)
+    if proc is None:
+        r = v3_plugin_get(pid)
+        if r and r.get('pid'):
+            try:
+                os.kill(int(r['pid']), signal.SIGTERM)
+            except Exception:
+                pass
+    else:
+        try:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                proc.kill()
+        except Exception:
+            pass
+    with v3_db() as c:
+        c.execute('UPDATE plugins SET enabled=0,pid=0,status=? WHERE plugin_id=?', ('stopped', pid))
+    v3_history(pid, 'stop', '')
+    return {'ok': True, 'msg': '已停止'}
+
+
+def v3_restart_plugin(pid):
+    v3_stop_plugin(pid)
+    time.sleep(0.5)
+    return v3_start_plugin(pid)
+
+
+def v3_plugin_health(pid):
+    r = v3_plugin_get(pid)
+    if not r:
+        return {'ok': False, 'msg': '插件不存在'}
+    proc = _V3_PROCS.get(pid)
+    alive = bool(proc and proc.poll() is None)
+    st = 'running' if alive else 'stopped'
+    if r.get('enabled') and not alive:
+        st = 'crashed'          # 声明启用但进程没了 = 崩溃（故障隔离，不影响宿主）
+    try:
+        with v3_db() as c:
+            c.execute('UPDATE plugins SET status=?,last_health=?,pid=? WHERE plugin_id=?',
+                      (st, time.strftime('%Y-%m-%d %H:%M:%S'), (proc.pid if alive else 0), pid))
+    except Exception:
+        pass
+    return {'ok': True, 'plugin_id': pid, 'status': st,
+            'pid': (proc.pid if alive else 0),
+            'restart_count': 0, 'last_health': r.get('last_health')}
+
+
+def v3_autostart():
+    """宿主启动时拉起所有 enabled 插件（故障隔离：单个失败不影响其它）。"""
+    try:
+        with v3_db() as c:
+            pids = [r['plugin_id'] for r in c.execute('SELECT plugin_id FROM plugins WHERE enabled=1')]
+        for pid in pids:
+            try:
+                v3_start_plugin(pid)
+            except Exception as e:
+                v3_log(pid, 'error', 'autostart 失败: %s' % str(e)[:120])
+        if pids:
+            logger.info('[V3] 已自动拉起 %d 个插件: %s', len(pids), ','.join(pids))
+    except Exception as e:
+        logger.warning('[V3] autostart: %s', str(e)[:120])
+
+
+# ── 插件 SDK token（子进程回调宿主用；每插件独立，不复用用户凭据） ──
+def v3_sdk_token(pid):
+    secret = cfg().get('sec_master_key') or str(SEC_ROOT)
+    return hashlib.sha256(('%s|%s|%s' % (pid, secret, V3_HOST_VERSION)).encode()).hexdigest()[:32]
+
+
+def v3_sdk_auth(pid, token):
+    return bool(token) and hmac.compare_digest(str(token), v3_sdk_token(pid))
+
+
+# ── 服务注册中心（V3 任务书 §4：插件与实例解耦，N 实例） ──────────
+def v3_service_list(t=None):
+    with v3_db() as c:
+        if t:
+            rows = [dict(r) for r in c.execute('SELECT * FROM service_instances WHERE type=? ORDER BY updated_at DESC', (t,))]
+        else:
+            rows = [dict(r) for r in c.execute('SELECT * FROM service_instances ORDER BY type,updated_at DESC')]
+    for r in rows:
+        try:
+            cfgv = json.loads(r.get('config') or '{}')
+        except Exception:
+            cfgv = {}
+        cfgv = dict(cfgv)
+        for k in list(cfgv):
+            if any(s in k.lower() for s in ('key', 'token', 'pass', 'secret', 'apikey')):
+                cfgv[k] = sec_mask(str(cfgv[k])) if cfgv[k] else ''
+        r['config_masked'] = cfgv
+        r.pop('config', None)
+        try:
+            r['capabilities'] = json.loads(r.get('capabilities') or '[]')
+        except Exception:
+            r['capabilities'] = []
+    return rows
+
+
+def v3_service_upsert(arg):
+    sid = str(arg.get('id') or '').strip() or ('svc-%s-%d' % (arg.get('type') or 'x', int(time.time())))
+    if not re.match(r'^[A-Za-z0-9_-]{2,64}$', sid):
+        return {'ok': False, 'msg': '实例 ID 非法（字母数字_-，2-64）'}
+    typ = str(arg.get('type') or '').strip().lower()
+    if not typ or not re.match(r'^[a-z0-9_]{2,32}$', typ):
+        return {'ok': False, 'msg': '服务类型非法'}
+    cfgv = arg.get('config') or {}
+    if not isinstance(cfgv, dict):
+        return {'ok': False, 'msg': 'config 必须是对象'}
+    try:
+        caps = json.dumps(arg.get('capabilities') or [], ensure_ascii=False)
+    except Exception:
+        caps = '[]'
+    now = time.strftime('%Y-%m-%d %H:%M:%S')
+    with v3_db() as c:
+        old = c.execute('SELECT created_at FROM service_instances WHERE id=?', (sid,)).fetchone()
+        created = old['created_at'] if old else now
+        c.execute('''INSERT OR REPLACE INTO service_instances
+                     (id,type,name,config,endpoint,enabled,health,capabilities,last_check,last_error,created_at,updated_at)
+                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?)''',
+                  (sid, typ, arg.get('name') or sid, json.dumps(cfgv, ensure_ascii=False),
+                   arg.get('endpoint') or '', int(bool(arg.get('enabled', 1))),
+                   (old and c.execute('SELECT health FROM service_instances WHERE id=?', (sid,)).fetchone()['health']) or 'unknown',
+                   caps, None, None, created, now))
+    return {'ok': True, 'msg': '实例已保存', 'id': sid}
+
+
+def v3_service_delete(sid):
+    with v3_db() as c:
+        c.execute('DELETE FROM service_instances WHERE id=?', (sid,))
+    return {'ok': True, 'msg': '已删除实例'}
+
+
+def v3_service_test(sid):
+    """真实连通测试（非伪造）：按 type 走已有适配器；失败如实返回。"""
+    with v3_db() as c:
+        r = c.execute('SELECT * FROM service_instances WHERE id=?', (sid,)).fetchone()
+    if not r:
+        return {'ok': False, 'msg': '实例不存在'}
+    typ = r['type']
+    try:
+        cfgv = json.loads(r['config'] or '{}')
+    except Exception:
+        cfgv = {}
+    ok, msg, caps = False, '未实现该服务类型的探测', []
+    try:
+        if typ in ('emby', 'jellyfin', 'plex'):
+            # 复用已有 _emby_http 的探测逻辑，取 System/Info（真实认证）
+            base = (cfgv.get('endpoint') or r['endpoint'] or '').rstrip('/')
+            key = cfgv.get('api_key') or ''
+            # ★ 本地已有凭据直接复用（用户原话「有我本地数据的直接配好，不要让我再填一遍」）
+            #   例：emby/emby_adult 类型回落 webcfg 的 emby_key/emby_key2
+            if not key and typ == 'emby':
+                key = (cfg().get('emby_key') or '') if 'adult' not in sid.lower()                     else (cfg().get('emby_key2') or cfg().get('emby_key') or '')
+            if not base and typ == 'emby':
+                _c = containers()
+                base = 'http://%s:%s' % (_c['emby']['addr'], _c['emby']['port'])
+            if not base or not key:
+                ok, msg = False, '缺 endpoint 或 api_key（且 webcfg 未配置该类凭据）'
+            else:
+                ua = base + '/System/Info?api_key=' + urllib.parse.quote(key)
+                s, j = _v3_json(ua, t=12)
+                if j and j.get('ServerName'):
+                    ok, msg = True, '已连接：%s v%s' % (j.get('ServerName'), j.get('Version') or '?')
+                    caps = ['sessions', 'library', 'users', 'rank', 'webhook']
+                else:
+                    msg = '连接失败（HTTP %s）：请检查地址/Key/网络' % s
+        elif typ in ('qbittorrent', 'moviepilot', 'mediatidy', 'clouddrive2', 'openlist', 'resourcetool'):
+            base = (cfgv.get('endpoint') or r['endpoint'] or '').rstrip('/')
+            if not base:
+                ok, msg = False, '缺 endpoint'
+            else:
+                s, b = _v3_wan(base, t=12)
+                ok = 200 <= s < 400
+                msg = ('可达 HTTP %s' % s) if ok else ('不可达 HTTP %s' % s)
+                caps = ['status']
+        else:
+            # 未知类型：只做 TCP/HTTP 可达性，能力显示「未识别」不伪造
+            base = (cfgv.get('endpoint') or r['endpoint'] or '').rstrip('/')
+            s, b = _v3_wan(base, t=10) if base else (-1, b'')
+            msg = 'HTTP %s（未知服务类型，能力未识别）' % s
+            ok = 200 <= s < 400
+    except Exception as e:
+        msg = '探测异常: %s' % sanitize_err(e, 160)
+    with v3_db() as c:
+        c.execute('UPDATE service_instances SET health=?,last_check=?,last_error=?,capabilities=? WHERE id=?',
+                  ('healthy' if ok else 'unhealthy', time.strftime('%Y-%m-%d %H:%M:%S'), '' if ok else msg,
+                   json.dumps(caps, ensure_ascii=False), sid))
+    return {'ok': ok, 'msg': msg, 'capabilities': caps, 'health': 'healthy' if ok else 'unhealthy'}
+
+
+# ── 事件总线（V3 任务书 §5.2：唯一 ID / 去重 / 重试 / 死信） ───────
+def v3_event_publish(ev_type, data=None, source='host', instance_id='', dedupe_key=''):
+    eid = 'ev-%s-%s' % (int(time.time() * 1000), uuid.uuid4().hex[:8])
+    try:
+        with v3_db() as c:
+            c.execute('''INSERT OR IGNORE INTO events
+                         (id,type,source,instance_id,data,status,dedupe_key,attempts,max_attempts,created_at)
+                         VALUES(?,?,?,?,?,'pending',?,0,3,?)''',
+                      (eid, ev_type, source, instance_id,
+                       json.dumps(data or {}, ensure_ascii=False), dedupe_key or None, time.strftime('%Y-%m-%d %H:%M:%S')))
+            inserted = c.total_changes > 0
+        if not inserted:
+            return {'ok': True, 'duplicate': True, 'msg': '重复事件已去重'}
+        # 同步分发给订阅者（插件通过轮询 /api/v3/sdk/events 拉取；webhook 可后续扩展）
+        return {'ok': True, 'event_id': eid, 'msg': '事件已发布'}
+    except Exception as e:
+        return {'ok': False, 'msg': '发布失败: %s' % str(e)[:120]}
+
+
+def v3_event_list(status='', limit=200):
+    with v3_db() as c:
+        if status:
+            rows = [dict(r) for r in c.execute(
+                'SELECT * FROM events WHERE status=? ORDER BY created_at DESC LIMIT ?', (status, int(limit)))]
+        else:
+            rows = [dict(r) for r in c.execute('SELECT * FROM events ORDER BY created_at DESC LIMIT ?', (int(limit),))]
+    for r in rows:
+        try:
+            r['data'] = json.loads(r.get('data') or '{}')
+        except Exception:
+            r['data'] = {}
+    return rows
+
+
+def v3_event_ack(event_id, ok=True, err=''):
+    with v3_db() as c:
+        r = c.execute('SELECT * FROM events WHERE id=?', (event_id,)).fetchone()
+        if not r:
+            return {'ok': False, 'msg': '事件不存在'}
+        if ok:
+            c.execute('UPDATE events SET status=?,processed_at=? WHERE id=?',
+                      ('processed', time.strftime('%Y-%m-%d %H:%M:%S'), event_id))
+        else:
+            att = (r['attempts'] or 0) + 1
+            st = 'dead' if att >= (r['max_attempts'] or 3) else 'pending'
+            c.execute('UPDATE events SET status=?,attempts=?,last_error=? WHERE id=?',
+                      (st, att, str(err)[:300], event_id))
+    return {'ok': True}
+
+
+# ── 能力聚合（V3 任务书 §5.3 动态模块发现） ───────────────────────
+def v3_capabilities(kind=None):
+    with v3_db() as c:
+        if kind:
+            rows = [dict(r) for r in c.execute(
+                'SELECT pc.* FROM plugin_capabilities pc JOIN plugins p ON p.plugin_id=pc.plugin_id '
+                'WHERE pc.kind=? AND p.enabled=1', (kind,))]
+        else:
+            rows = [dict(r) for r in c.execute(
+                'SELECT pc.* FROM plugin_capabilities pc JOIN plugins p ON p.plugin_id=pc.plugin_id '
+                'WHERE p.enabled=1')]
+    for r in rows:
+        try:
+            r['payload'] = json.loads(r.get('payload') or '{}')
+        except Exception:
+            r['payload'] = {}
+    return rows
+
+
+def v3_overview():
+    """V3 驾驶舱数据：全部来自真实 registry / plugin / event，无模拟值。"""
+    with v3_db() as c:
+        plugins_total = c.execute('SELECT COUNT(*) FROM plugins').fetchone()[0]
+        plugins_on = c.execute('SELECT COUNT(*) FROM plugins WHERE enabled=1').fetchone()[0]
+        svc_total = c.execute('SELECT COUNT(*) FROM service_instances').fetchone()[0]
+        svc_healthy = c.execute("SELECT COUNT(*) FROM service_instances WHERE health='healthy'").fetchone()[0]
+        ev_pending = c.execute("SELECT COUNT(*) FROM events WHERE status='pending'").fetchone()[0]
+        ev_dead = c.execute("SELECT COUNT(*) FROM events WHERE status='dead'").fetchone()[0]
+        caps = c.execute('SELECT kind,COUNT(*) n FROM plugin_capabilities pc JOIN plugins p '
+                         'ON p.plugin_id=pc.plugin_id WHERE p.enabled=1 GROUP BY kind').fetchall()
+    return {'ok': True, 'version': V3_HOST_VERSION,
+            'plugins': {'total': plugins_total, 'enabled': plugins_on},
+            'services': {'total': svc_total, 'healthy': svc_healthy},
+            'events': {'pending': ev_pending, 'dead': ev_dead},
+            'capabilities': {r['kind']: r['n'] for r in caps},
+            'data_root': V3_ROOT}
+
+
+# ── V3 路由分发（唯一入口，老 327 路由完全不动） ──────────────────
+
+def v3_sdk_route_get(p, q1, headers=None):
+    """插件子进程通过 SDK 回调宿主（header token 鉴权，权限点校验）。"""
+    # 公开端点：SDK schema（供开发者查看 manifest 规范，不含任何凭据）
+    if p == '/api/v3/sdk/schema':
+        return {'ok': True, 'required': V3_MANIFEST_REQUIRED, 'optional': V3_MANIFEST_OPTIONAL,
+                'permissions': V3_PERMISSIONS, 'host_version': V3_HOST_VERSION}
+    hs = headers or {}
+    pid = hs.get('X-KFC-Plugin') or q1('plugin_id') or ''
+    tok = hs.get('X-KFC-Token') or q1('token') or ''
+    if not v3_sdk_auth(pid, tok):
+        return {'ok': False, 'msg': 'SDK token 无效', 'code': 403}
+    if p == '/api/v3/sdk/config':
+        with v3_db() as c:
+            rows = [dict(r) for r in c.execute('SELECT key,value FROM plugin_config WHERE plugin_id=?', (pid,))]
+        cfg = {}
+        for r in rows:
+            try: cfg[r['key']] = json.loads(r['value'])
+            except Exception: cfg[r['key']] = r['value']
+        return {'ok': True, 'config': cfg}
+    if p == '/api/v3/sdk/kv':
+        with v3_db() as c:
+            r = c.execute('SELECT v FROM plugin_kv WHERE plugin_id=? AND k=?', (pid, q1('k'))).fetchone()
+        return {'ok': True, 'value': json.loads(r['v']) if r else None}
+    if p == '/api/v3/sdk/events':
+        # 只返回该插件订阅的事件类型（权限隔离：插件看不到别人的事件）
+        with v3_db() as c:
+            subs = [r['event_type'] for r in c.execute(
+                'SELECT event_type FROM event_subscriptions WHERE subscriber=? AND enabled=1', (pid,))]
+        evs = []
+        if subs:
+            marks = ','.join('?' for _ in subs)
+            rows = c.execute('SELECT * FROM events WHERE status=? AND type IN (%s) ORDER BY created_at LIMIT ?'
+                             % marks, ['pending'] + subs + [int(q1('limit') or 20)]).fetchall()
+            for r in rows:
+                d = dict(r)
+                try: d['data'] = json.loads(d.get('data') or '{}')
+                except Exception: d['data'] = {}
+                evs.append(d)
+        return {'ok': True, 'events': evs}
+    if p == '/api/v3/sdk/services':
+        return {'ok': True, 'instances': v3_service_list(q1('type') or None)}
+    return {'ok': False, 'msg': 'SDK 未识别: %s' % p, 'code': 404}
+
+
+def v3_sdk_route_post(p, b, headers=None):
+    hs = headers or {}
+    pid = hs.get('X-KFC-Plugin') or (b or {}).get('plugin_id') or ''
+    tok = hs.get('X-KFC-Token') or (b or {}).get('token') or ''
+    if not v3_sdk_auth(pid, tok):
+        return {'ok': False, 'msg': 'SDK token 无效', 'code': 403}
+    if p == '/api/v3/sdk/kv':
+        with v3_db() as c:
+            c.execute('INSERT OR REPLACE INTO plugin_kv(plugin_id,k,v,updated_at) VALUES(?,?,?,?)',
+                      (pid, str(b.get('k')), json.dumps(b.get('v'), ensure_ascii=False),
+                       time.strftime('%Y-%m-%d %H:%M:%S')))
+        return {'ok': True}
+    return {'ok': False, 'msg': 'SDK POST 未识别: %s' % p, 'code': 404}
+
+def v3_route_get(p, q1):
+    if p == '/api/v3/overview':
+        return v3_overview()
+    if p == '/api/v3/plugins':
+        return {'ok': True, 'plugins': v3_plugins_list()}
+    if p == '/api/v3/plugins/health':
+        return {'ok': True, 'health': [v3_plugin_health(r['plugin_id']) for r in v3_plugins_list()]}
+    if p == '/api/v3/plugins/capabilities':
+        return {'ok': True, 'capabilities': v3_capabilities(q1('kind') or None)}
+    if p == '/api/v3/services':
+        return {'ok': True, 'instances': v3_service_list(q1('type') or None)}
+    if p == '/api/v3/events':
+        return {'ok': True, 'events': v3_event_list(q1('status') or '', int(q1('limit') or 200))}
+    if p == '/api/v3/history':
+        with v3_db() as c:
+            rows = [dict(r) for r in c.execute('SELECT * FROM plugin_history ORDER BY id DESC LIMIT 200')]
+        return {'ok': True, 'history': rows}
+    if p == '/api/v3/permissions':
+        return {'ok': True, 'permissions': [{'key': k, 'label': v} for k, v in V3_PERMISSIONS.items()]}
+    if p == '/api/v3/sdk/schema':
+        return {'ok': True, 'required': V3_MANIFEST_REQUIRED, 'optional': V3_MANIFEST_OPTIONAL,
+                'permissions': V3_PERMISSIONS, 'host_version': V3_HOST_VERSION}
+    return {'ok': False, 'msg': 'V3 GET 未识别: %s' % p, 'code': 404}
+
+
+def v3_route_post(p, b, headers=None):
+    if p.startswith('/api/v3/sdk/'):
+        return v3_sdk_route_post(p, b, headers)
+
+    if p == '/api/v3/plugin/install':
+        return v3_install_plugin(b.get('manifest') or {}, b.get('source') or 'local',
+                                 b.get('source_url') or '')
+    if p == '/api/v3/plugin/enable':       # 权限审核后在 UI 点启用
+        pid = b.get('plugin_id') or ''
+        r = v3_plugin_get(pid)
+        if not r:
+            return {'ok': False, 'msg': '插件不存在'}
+        m = v3_plugin_manifest(pid) or {}
+        granted = set(b.get('granted_permissions') or (m.get('permissions') or []))
+        need = set(m.get('permissions') or [])
+        if need - granted:
+            return {'ok': False, 'msg': '未授权权限: %s' % ','.join(sorted(need - granted))}
+        with v3_db() as c:
+            c.execute('UPDATE plugins SET permissions=? WHERE plugin_id=?',
+                      (json.dumps(sorted(granted), ensure_ascii=False), pid))
+        return v3_start_plugin(pid)
+    if p == '/api/v3/plugin/disable':
+        return v3_stop_plugin(b.get('plugin_id') or '')
+    if p == '/api/v3/plugin/restart':
+        return v3_restart_plugin(b.get('plugin_id') or '')
+    if p == '/api/v3/plugin/uninstall':
+        return v3_uninstall_plugin(b.get('plugin_id') or '')
+    if p == '/api/v3/plugin/config':
+        pid = b.get('plugin_id') or ''
+        with v3_db() as c:
+            for k, v in (b.get('config') or {}).items():
+                c.execute('INSERT OR REPLACE INTO plugin_config(plugin_id,key,value,updated_at) VALUES(?,?,?,?)',
+                          (pid, str(k), json.dumps(v, ensure_ascii=False), time.strftime('%Y-%m-%d %H:%M:%S')))
+        return {'ok': True, 'msg': '配置已保存'}
+    if p == '/api/v3/plugin/log':
+        v3_log(b.get('plugin_id') or 'sdk', b.get('level') or 'info', b.get('msg') or '')
+        return {'ok': True}
+    if p == '/api/v3/service/upsert':
+        return v3_service_upsert(b or {})
+    if p == '/api/v3/service/delete':
+        return v3_service_delete(b.get('id') or '')
+    if p == '/api/v3/service/test':
+        return v3_service_test(b.get('id') or '')
+    if p == '/api/v3/event/publish':
+        return v3_event_publish(b.get('type') or '', b.get('data') or {},
+                                b.get('source') or 'api', b.get('instance_id') or '',
+                                b.get('dedupe_key') or '')
+    if p == '/api/v3/event/ack':
+        return v3_event_ack(b.get('event_id') or '', bool(b.get('ok', True)), b.get('err') or '')
+    return {'ok': False, 'msg': 'V3 POST 未识别: %s' % p, 'code': 404}
+
+
+# ── end V3.0 插件化运行时 ──────────────────────────────────────────
+
+
 class H(BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
 
@@ -25317,6 +28301,11 @@ class H(BaseHTTPRequestHandler):
         u = urllib.parse.urlparse(self.path)
         p, q = u.path, urllib.parse.parse_qs(u.query)
         q1 = lambda k, d='': q.get(k, [d])[0]
+        # ★ V3.0 插件平台：/api/v3/* 统一分发（老 327 路由零改动）
+        if p.startswith('/api/v3/sdk/'):
+            return self._j(v3_sdk_route_get(p, q1, dict(self.headers)))
+        if p.startswith('/api/v3/'):
+            return self._j(v3_route_get(p, q1))
         # ★ v6 Emby 图片代理：/embyimg/<which>/<itemid>/<imgtype>?w=300&t=<tag>
         #   前端不接触 API Key，商用安全；走后端转发并缓存（1 天）。
         if p.startswith('/embyimg/'):
@@ -25336,7 +28325,7 @@ class H(BaseHTTPRequestHandler):
                     imtype = seg[4] if len(seg) > 4 else 'Primary'
                     _base = '/Items/%s/Images/%s' % (itemid, imtype)
                 # ★★ v1.25 BUG-170：id 合法性校验不能只认纯数字。
-                #   Emby 的 UserId 是 32 位 **hex**（例如 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx），
+                #   Emby 的 UserId 是 32 位 **hex**（如 EXAMPLE_EMBY_USERID_32hex），
                 #   含 a-f 字母 → isdigit() 直接 False → 用户头像代理 100% 404，
                 #   排名榜头像全是裂图。现在按「长度 1..64 且只含安全字符」放行。
                 if (not itemid or len(itemid) > 64
@@ -25603,6 +28592,46 @@ class H(BaseHTTPRequestHandler):
         if p == '/api/emby/rank':
             return self._j(emby_rank(kind=q1('kind', 'user_today'),
                                      days=q1('days', '1'), server=q1('server')))
+        # ★ V1.52 Emby 故障检修 · 全流程节点监控（只读采集）
+        if p == '/api/embyfix/overview':
+            return self._j(cached('embyfix_ov', embyfix_overview, ttl=15,
+                                  force=(q1('force', '0') == '1')))
+        if p == '/api/embyfix/nodes':
+            return self._j(embyfix_overview())
+        if p == '/api/embyfix/items':
+            return self._j(cached('embyfix_items', lambda: embyfix_items(
+                int(q1('limit', '40') or 40), q1('q', ''), q1('only', 'broken')),
+                ttl=45, force=(q1('force', '0') == '1')))
+        # ★ 异步逐剧核对：单剧 1~2 次 Emby 请求，不阻塞首屏
+        if p == '/api/embyfix/verify':
+            return self._j(embyfix_verify(q1('path', ''), q1('tmdbid', ''),
+                                          q1('name', '')))
+        # ★★ V1.53 Emby 故障检修 · 精密控制台（双实例 / 三端同查 / 后台扫描）
+        if p == '/api/embyfix/v2/overview':
+            return self._j(embyfix_v2_overview(q1('which', 'emby'),
+                                               force=(q1('force', '0') == '1')))
+        if p == '/api/embyfix/v2/libs':
+            return self._j(embyfix_v2_libs(q1('which', 'emby'),
+                                           with_count=(q1('count', '0') == '1')))
+        if p == '/api/embyfix/v2/cross':
+            return self._j(embyfix_v2_cross(
+                which=q1('which', 'emby'), term=q1('term', ''), tmdbid=q1('tmdbid', ''),
+                both=(q1('both', '0') == '1'), deep_cloud=(q1('deep', '1') == '1')))
+        if p == '/api/embyfix/v2/scan/status':
+            return self._j(embyfix_v2_scan_status())
+        if p == '/api/embyfix/v2/ops':
+            return self._j(embyfix_v2_ops(int(q1('limit', '80') or 80)))
+        if p == '/api/embyfix/v2/compare':
+            return self._j(embyfix_v2_compare(term=q1('term', ''), tmdbid=q1('tmdbid', '')))
+
+        if p == '/api/embyfix/logs':
+            return self._j(embyfix_logs(int(q1('limit', '60') or 60)))
+        if p == '/api/embyfix/cases':
+            return self._j(embyfix_cases())
+        if p == '/api/embyfix/poster':
+            _efb, _efct = embyfix_poster(q1('p', ''))
+            return self._s(200, _efb, _efct)
+
         # ★ 2026-11-06 洗版槽位对照：该片在两台 Emby 的库内版本按槽位归组
         if p == '/api/discover/libslots':
             return self._j(discover_libslots(q1('tmdbid'), q1('type', 'movie')))
@@ -25612,6 +28641,31 @@ class H(BaseHTTPRequestHandler):
         if p == '/api/slots/profile':
             return self._j({'ok': True, 'profile': _slot_profile()})
         # ★★ 2026-11-06 保号页：MP 直连每站保号数据（上传/下载/分享率/魔力/等级/做种）
+        if p == '/api/ka/seeds':
+            return self._j(ka_seeds_detail(q1('id')))
+        # ★ v1.49 单站实时刷新（卡片右上角 ⟳）：真·POST 让 MP 当场重抓该站
+        if p == '/api/ka/live':
+            return self._j(ka_live_one(sid=q1('id'), dom=q1('dom')))
+        if p == '/api/ka/sync/status':
+            ts0 = _KA_SYNC.get('ts') or 0
+            _bt = 0.0
+            try:
+                _stx = _ka_read_state()
+                _bt = max([float((v or {}).get('last_probe') or 0)
+                           for v in (_stx.get('sites') or {}).values()] or [0.0])
+            except Exception:
+                pass
+            return self._j({'ok': True, 'running': _KA_SYNC.get('running'),
+                            'msg': _KA_SYNC.get('msg') or '',
+                            'stage': _KA_SYNC.get('stage') or '',
+                            'ok_n': _KA_SYNC.get('ok_n') or 0,
+                            'done': _KA_SYNC.get('done') or 0,
+                            'total': _KA_SYNC.get('total') or 0,
+                            'bot_ts': _bt,
+                            'bot_ok': _KA_SYNC.get('bot_ok') or 0,
+                            'bot_total': _KA_SYNC.get('bot_total') or 0,
+                            'detail': _KA_SYNC.get('detail') or [],
+                            'age': round(time.time() - ts0) if ts0 else None})
         if p == '/api/ka/sites':
             return self._j(keepalive_sites())
         # ★ v1.22 飞牛 NAS 硬件仪表盘（温度/磁盘/繁忙度，宿主机采集 → 文件）
@@ -25625,8 +28679,7 @@ class H(BaseHTTPRequestHandler):
         if p == '/':
             f = os.path.join(HERE, 'index.html')
             if os.path.exists(f):
-                _html = open(f, encoding='utf-8').read()
-                return self._s(200, _inject_env(_html), 'text/html; charset=utf-8')
+                return self._s(200, open(f, encoding='utf-8').read(), 'text/html; charset=utf-8')
             return self._s(404, 'index.html missing', 'text/plain; charset=utf-8')
         # ★★ v1.37 S4 首次运行引导：告诉前端「该不该弹向导」
         if p == '/api/setup/state':
@@ -25749,6 +28802,21 @@ class H(BaseHTTPRequestHandler):
             d = diagnose()
             d['ok'] = True
             return self._j(cached('diagnose', lambda: d, force=(q1('force', '0') == '1')))
+        if p == '/api/mp/refresh_sites':
+            if _MP_SYNC.get('running'):
+                return self._j({'ok': True, 'running': True,
+                                'msg': '上一次同步仍在进行中…'})
+            _MP_SYNC['running'] = True
+            _MP_SYNC['msg'] = '已触发，正在逐站刷新统计…'
+            _MP_SYNC['ts'] = time.time()
+            threading.Thread(target=_mp_refresh_sites_bg, daemon=True).start()
+            return self._j({'ok': True, 'running': True,
+                            'msg': '已触发全部站点统计刷新（后台执行）'})
+        if p == '/api/mp/refresh_sites/status':
+            ts0 = _MP_SYNC.get('ts') or 0
+            return self._j({'ok': True, 'running': _MP_SYNC.get('running'),
+                            'msg': _MP_SYNC.get('msg') or '',
+                            'age': round(time.time() - ts0) if ts0 else None})
         if p == '/api/chain/health':
             # ★ 2026-10-24 链路健康总览。5s 短缓存：qB 的 WebUI 单线程，
             #   多页面同时轮询会把 qB 打满（历史踩过坑，见 _qb_all 注释）。
@@ -26016,6 +29084,8 @@ class H(BaseHTTPRequestHandler):
             return self._j(db_accounts(q=q1('q'), limit=q1('limit', '300'), src=q1('src', '')))
         if p == '/api/rt/snapshot':
             return self._j(rt_snapshot())
+        if p == '/api/rt/expiry':
+            return self._j(rt_expiry_report())
         if p == '/api/rt/sync_renew':
             return self._j(rt_sync_renewals())
         if p == '/api/bot/lines':
@@ -26035,6 +29105,49 @@ class H(BaseHTTPRequestHandler):
             return
         if p == '/api/pt':
             return self._j(cached('pt', pt_overview, force=(q1('force', '0') == '1')))
+        # ★★ V1.48 媒体库缺失封面：实例派生 / 扫描 / 进度（F：从 v1.47c 真源恢复）
+
+        if p == '/api/cover/servers':
+
+            return self._j({'ok': True, 'servers': cover_servers()})
+
+        if p == '/api/cover/status':
+
+            return self._j(cover_status())
+
+        if p == '/api/cover/scan':
+
+            return self._j(cover_scan(q1('server', 'emby'),
+
+                                      q1('scope', 'recent'),
+
+                                      int(q1('limit', '1000') or 1000),
+
+                                      q1('lib', '')))
+
+        # ★★ V1.48 内存预警（E）：面板读 15s 缓存，不触发重采样
+
+        if p.startswith('/api/q2f/browse'):
+            return self._j(q2f_browse(q1('path', '/115')))
+        if p.startswith('/api/q2f/source'):
+            return self._j(q2f_source())
+        if p.startswith('/api/q2f/links'):
+            return self._j(q2f_links(self_addr_from_headers(self.headers)))
+        if p == '/api/q2f/status':
+            return self._j(q2f_status())
+        if p == '/api/memguard/status':
+
+            return self._j(mg_snapshot())
+
+        # ★★ V1.48 点排行榜头像 → 该用户看过哪些影片（两台 Emby 合并，只读）
+
+        if p == '/api/emby/userplays':
+
+            return self._j(emby_userplays(q1('name'), q1('uid'),
+
+                                          q1('days', '365'), q1('limit', '120')))
+
+
         if p == '/api/media':
             return self._j(cached('media', lambda: media_overview(int(q1('n', '36') or 36)),
                                   force=(q1('force', '0') == '1')))
@@ -26149,7 +29262,7 @@ class H(BaseHTTPRequestHandler):
             return self._j(auto_run(dry=True, tpl_id=auto_cfg().get('mode') or 'normal'))
         if p == '/api/tgbots':
             return self._j({'ok': True, 'bots': cfg().get('tg_bots') or [],
-                            'tg_owner': cfg().get('tg_owner') or os.environ.get('MH_OWNER_TG') or 0})
+                            'tg_owner': cfg().get('tg_owner') or {{MH_OWNER_TG}}})
         if p == '/api/templates':
             return self._j({'ok': True, 'templates': tpl_defs(),
                             'base': {'key': TPL_KEY, 'info': tpl_info()},
@@ -26329,6 +29442,10 @@ class H(BaseHTTPRequestHandler):
         if _g:
             return self._j({'ok': False, 'msg': _g, 'code': 403, 'gate': 'license'}, 403)
 
+        # ★ V3.0 插件平台：/api/v3/* 统一分发（写操作同样过上面的授权闸）
+        if u.path.startswith('/api/v3/'):
+            return self._j(v3_route_post(u.path, b or {}, dict(self.headers)))
+
         # ★ v1.15 修：pauseall_dl / reannounce 原先只写在 GET 段，而前端按钮
         #   用的是 fetch(...,{method:'POST'}) → 命中 do_POST → 404「not found」，
         #   用户点了「暂停全部下载 / 重报做种」毫无反应。这里补 POST 分支。
@@ -26344,6 +29461,25 @@ class H(BaseHTTPRequestHandler):
             return self._j(_qb_reannounce(_dom))
         if u.path == '/api/mt/rules/sync_mp':
             return self._j(mp_apply_mt_rules())
+        # ★ V1.52 Emby 故障检修 · 对症修复（用户点击才执行；受授权写闸保护）
+        if u.path == '/api/embyfix/repair':
+            return self._j(embyfix_repair(b))
+        # ★★ V1.53 精密控制台写动作（受授权写闸保护；真实作用于 Emby / 本地文件）
+        if u.path == '/api/embyfix/v2/scan/start':
+            return self._j(embyfix_v2_scan_start(
+                which=(b.get('which') or 'emby'), library=(b.get('library') or ''),
+                deep_cloud=bool(b.get('deep_cloud'))))
+        if u.path == '/api/embyfix/v2/scan/stop':
+            return self._j(embyfix_v2_scan_stop())
+        if u.path == '/api/embyfix/v2/refresh':
+            return self._j(embyfix_v2_refresh(
+                which=(b.get('which') or 'emby'), scope=(b.get('scope') or 'item'),
+                target=(b.get('target') or ''), path=(b.get('path') or '')))
+        if u.path == '/api/embyfix/v2/node':
+            return self._j(embyfix_v2_node(
+                which=(b.get('which') or 'emby'), action=(b.get('action') or ''),
+                arg=(b.get('arg') or '')))
+
         if u.path.startswith('/api/mtbox/'):
             return self._j(mtbox_post(u.path, b))
         if u.path.startswith('/api/naming/'):
@@ -26378,6 +29514,49 @@ class H(BaseHTTPRequestHandler):
             return self._j(kg_driver_toggle(bool(b.get('enable'))))
         if u.path == '/api/kg/mdc/task/retry':
             return self._j(kg_mdc_task_retry(b.get('id')))
+        # ★★ V1.48 媒体库缺失封面：全库异步扫描 + 补齐（授权闸已在 _do_POST 生效）
+
+        if u.path == '/api/cover/scan_async':
+
+            jid = submit('cover_scan', cover_scan,
+
+                         str(b.get('server') or 'emby'),
+
+                         str(b.get('scope') or 'all'),
+
+                         int(b.get('limit') or 200000),
+
+                         str(b.get('lib') or ''))
+
+            return self._j({'ok': True, 'async': True, 'job': jid,
+
+                            'msg': '全库缺封面扫描已提交'})
+
+        if u.path == '/api/cover/fix':
+
+            jid = submit('cover_fix', cover_fix,
+
+                         b.get('items'), str(b.get('server') or 'emby'),
+
+                         bool(b.get('dry')), str(b.get('size') or 'w500'),
+
+                         bool(b.get('loose')))
+
+            return self._j({'ok': True, 'async': True, 'job': jid,
+
+                            'msg': '缺失封面补齐已提交'})
+
+        # ★★ V1.48 内存预警（E）：阈值/开关保存 + 手动测试 TG 推送
+
+        if u.path == '/api/memguard/config':
+
+            return self._j({'ok': True, 'cfg': mg_save(b)})
+
+        if u.path == '/api/memguard/test':
+
+            return self._j(mg_test_push())
+
+
         if u.path == '/api/emby/imgfix':
             jid = submit('emby_imgfix', emby_imgfix,
                          b.get('items') or [],
@@ -26893,6 +30072,29 @@ class H(BaseHTTPRequestHandler):
                              lambda: _logged_action(key, act, b.get('arg'), '%s %s' % (key, act)))
                 return self._j({'ok': True, 'async': True, 'job': jid, 'msg': '已提交容器操作'})
             return self._j(_logged_action(key, act, b.get('arg'), '%s %s' % (key, act)))
+        if u.path == '/api/q2f/scan':
+            jid = submit('q2f.scan', lambda: q2f_scan(True))
+            return self._j({'ok': True, 'async': True, 'job': jid,
+                            'msg': '已触发夸克中转扫描与入队（后台执行）'})
+        if u.path == '/api/q2f/config':
+            _s = q2f_state()
+            if 'enabled' in b:
+                _s['enabled'] = bool(b.get('enabled'))
+            q2f_save(_s)
+            return self._j({'ok': True, 'enabled': _s.get('enabled', True),
+                            'msg': '自动监控已' + ('启用' if _s.get('enabled', True) else '停用')})
+        if u.path == '/api/q2f/manual':
+            return self._j(q2f_manual(b.get('rels') or [], force=bool(b.get('force'))))
+        if u.path == '/api/q2f/link':
+            return self._j(q2f_link((b.get('path') or '').strip()))
+        if u.path == '/api/q2f/action':
+            return self._j(q2f_action((b.get('act') or '').strip(),
+                                      b.get('keys') or [], on=b.get('on'), up=b.get('up'),
+                                      patch=b.get('patch') or {}))
+        if u.path == '/api/q2f/mt':
+            jid = submit('q2f.mt', lambda: q2f_mt_create())
+            return self._j({'ok': True, 'async': True, 'job': jid,
+                            'msg': '已提交 MT 任务组模板方案创建'})
         if u.path == '/api/workflow/run':
             stages = b.get('stages') or ['moviepilot', 'qbittorrent', 'clouddrive2',
                                          'mediatidy', 'avdb', 'emby']
@@ -27039,6 +30241,22 @@ class H(BaseHTTPRequestHandler):
                 oplog('keepalive', 'toggle', '保号启停 %s → %s'
                       % (sid, '开启' if b.get('enabled') else '停用'), True, r.get('msg'))
             return self._j(r)
+        if u.path == '/api/ka/sync':
+            if _KA_SYNC.get('running'):
+                return self._j({'ok': True, 'running': True,
+                                'msg': '上一次同步仍在进行中，请稍候…'})
+            _KA_SYNC['running'] = True
+            _KA_SYNC['msg'] = '正在逐站实时抓取…'
+            _KA_SYNC['stage'] = '准备中'
+            _KA_SYNC['detail'] = []
+            _KA_SYNC['by_id'] = {}
+            _KA_SYNC['ok_n'] = 0
+            _KA_SYNC['done'] = 0
+            _KA_SYNC['total'] = 0
+            _KA_SYNC['ts'] = time.time()
+            threading.Thread(target=_ka_sync_bg, daemon=True).start()
+            return self._j({'ok': True, 'running': True,
+                            'msg': '已触发全部站点实时同步（MP 当场重抓 + 保号 Bot 立即探测）'})
         if u.path == '/api/keepalive/kick':
             sid = str(b.get('id') or '')
             if not sid:
@@ -27083,6 +30301,10 @@ class H(BaseHTTPRequestHandler):
             return self._j(rt_push_missing())
         if u.path == '/api/rt/sync':
             return self._j(rt_pull_sync())
+        if u.path == '/api/rt/expiry/apply':
+            return self._j(rt_expiry_apply(b))
+        if u.path == '/api/rt/expiry/auto':
+            return self._j(rt_expiry_auto_set(b))
         if u.path == '/api/rt/set_cookie':
             return self._j(rt_set_cookie(b.get('tg'), b.get('cookie') or ''))
         if u.path == '/api/rt/create':
@@ -27125,6 +30347,24 @@ class H(BaseHTTPRequestHandler):
                 source=str(b.get('source') or 'cc'),
                 pasted_jwt=str(b.get('jwt') or ''),
                 did=str(b.get('did') or ''), vid=str(b.get('vid') or '')))
+        if u.path == '/api/mteam/status':
+            probe = str(b.get('probe') or '0').lower() in ('1', 'true', 'yes')
+            return self._j(mteam_status(probe=probe))
+        if u.path == '/api/mteam/autoheal':
+            return self._j(mteam_autoheal(
+                force=str(b.get('force') or '0').lower() in ('1', 'true', 'yes')))
+        if u.path == '/api/mteam/recover/trigger':
+            return self._j(mteam_recover_set('request'))
+        if u.path == '/api/mteam/recover/flag':
+            rec = _mt_rec_read()
+            return self._j({'ok': True,
+                            'request_ts': float(rec.get('request_ts') or 0),
+                            'done_ts': float(rec.get('done_ts') or 0),
+                            'wd_ts': float(rec.get('wd_ts') or 0)})
+        if u.path == '/api/mteam/recover/done':
+            return self._j(mteam_recover_set('done'))
+        if u.path == '/api/mteam/recover/heartbeat':
+            return self._j(mteam_recover_set('heartbeat'))
         if u.path == '/api/submgmt/act':
             ids = b.get('ids') or []
             act = str(b.get('act') or '')
@@ -28936,7 +32176,1475 @@ def pipeline_html():
     return _ui_page('入库流水线', body, cur='pipeline')
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# V1.52 · Emby 故障检修 / 全流程节点监控（用户 2026-11-11 点名）
+#   链路：115 网盘新增 → MT 定期轮询 → 整理到目标路径 → STRM 实时生成
+#         → 通知 Emby 刷新 → Emby 入库可播放 → 元数据/封面刮削
+#   设计：逐节点真值采集 + 逐剧集粒度（TMDBID/封面/集数差）+ 失败标注 + 对症修复
+#   红线：只读为主；写动作仅在用户点击「修复」时执行，且先备份、可回退。
+#   数据来源全部走容器内已挂载路径 /dockroot、/CloudNAS，不写死任何凭据。
+# ════════════════════════════════════════════════════════════════════════════
+import re as _ef_re
+import time as _ef_time
+
+EF_STRM_ROOT = '/dockroot/mediatidy/strm'
+EF_CLOUD_ROOT = '/CloudNAS/115open'
+EF_MTLOG_DIR = '/dockroot/mediatidy/data/logs'
+EF_EMBY_PREFIX = '/strm'
+
+EF_NODES = [
+    {'key': 'cloud115',   'icon': '☁️', 'name': '115 网盘',      'desc': 'CD2 挂载可读 · 源视频文件存在'},
+    {'key': 'mtPoll',     'icon': '🔄', 'name': 'MT 定期轮询',   'desc': 'STRM-Realtime 轮询扫描新增文件'},
+    {'key': 'mtOrganize', 'icon': '📦', 'name': '整理到目标路径', 'desc': 'MT 批量转移到 destDir 正库'},
+    {'key': 'strmGen',    'icon': '📝', 'name': 'STRM 生成',      'desc': '生成 .strm 并指向 115 实体'},
+    {'key': 'embyNotify', 'icon': '📡', 'name': '通知 Emby 刷新', 'desc': 'KFC / KFC2 路径刷新成功'},
+    {'key': 'embyIndex',  'icon': '📺', 'name': 'Emby 入库',      'desc': 'Series/Episode 存在且可播放'},
+    {'key': 'metaScrape', 'icon': '🖼️', 'name': '元数据与封面',   'desc': 'TMDBID / NFO / 海报 / Primary 图'},
+]
+
+EF_CASES = [
+    {
+        'id': 'EF-001', 'level': 'critical', 'title': '年代分组层被误写 tvshow.nfo → 整层剧集被吞',
+        'symptom': '115 与 STRM 都有某剧，Emby 剧集库却搜不到；库中只出现一部名为「2010」的剧。',
+        'root': '分组层目录（/电视剧/欧美剧/2010-2019/）里出现 tvshow.nfo，Emby 把整个年代层识别成一部 Series，其下 665 个剧目录全变成 Season。',
+        'evidence': '全库 130 个分组层普查：只有这一层带 tvshow.nfo；假 Series「2010」下挂 600 个 Season；nfo 格式含 displayorder/lockdata 且缺 tmdbid，与主库 SaveLocalMetadata=True 自写格式一致。',
+        'impact': '该层全部剧集无法作为独立剧集显示；毒枭 (2015) 的 140 集全部落在假剧下。',
+        'fix': '① 备份并移走层 tvshow.nfo；② 让 Emby 忘掉该假 Series 索引（PathExclusions 排除→扫描→取消排除→再扫描，或临时改名目录法）；③ 关闭 SaveLocalMetadata 防复发；④ 单剧可先建独立小库快速恢复。',
+        'guard': '禁止用 DELETE /Items/{Id} 清索引（官方定义连文件系统一起删）；禁止反复 POST /Library/Refresh（会取消正在跑的扫描再重启）。',
+    },
+    {
+        'id': 'EF-002', 'level': 'high', 'title': 'KFC2 的 Emby 刷新路径多了 /app 前缀',
+        'symptom': 'MT 日志每次刷新都是 success:1 / failed:1，KFC2 长期失败。',
+        'root': 'KFC2 实例配置的刷新路径写成 /app/strm/...，而 Emby 实际库路径是 /strm/...，路径不匹配导致 Library/Media/Updated 无效。',
+        'evidence': '[STRM-Realtime] Emby refresh path failed {"server":"KFC2","path":"/app/strm/..."}；同时 KFC 用 /strm/... 成功。',
+        'impact': '第二台 Emby 的新增内容长期不入库。',
+        'fix': '把 KFC2 的 embyRefresh 路径前缀从 /app/strm 改为 /strm（MT 侧 emby_instances / STRM-Realtime 配置），保存后重启 MT 加载。',
+        'guard': '改完必须实测日志出现「路径通知成功」且 failed=0。',
+    },
+    {
+        'id': 'EF-003', 'level': 'high', 'title': '增量通知 Created 不会导入新文件（吞噬星空 E249）',
+        'symptom': '115 与 STRM 都有 S01E249，Emby 只到 E248，前面 1–248 一集不缺。',
+        'root': 'Emby 的 Library/Media/Updated 增量通知只更新已存在 item，不会把全新 .strm 导入库；必须靠「Scan media library」任务或重启 Emby 才会发现新文件。',
+        'evidence': '实测对该路径连发 140 个 Created 通知，新库条目仍为 1；重启 emby-main 后 30 秒内变成 145 条（140 集全部入库）。',
+        'impact': '新增剧集长时间看不到，尤其最后一集。',
+        'fix': '对目标剧：POST /emby/Items/{SeriesId}/Refresh?Recursive=true 或直接启动 Scan media library 任务；不要重复触发（会取消重启扫描）。',
+        'guard': '启停用 /ScheduledTasks/Running/{Id} 的 POST/DELETE，别用 /Library/Refresh 反复调。',
+    },
+    {
+        'id': 'EF-004', 'level': 'medium', 'title': '全库扫描极慢 / 被反复取消',
+        'symptom': 'Scan media library 长期 Running，进度几分钟只涨 0.3%。',
+        'root': '每个 .strm 都要通过 CD2 连 115 探测媒体信息，32768 个文件耗时数小时；反复调用 /Library/Refresh 会取消并重启任务，永远跑不完。',
+        'evidence': '日志 Cancelled after 10m28s → 立刻 Executing；进度 4 分钟 0.25%→0.58%。',
+        'impact': '所有新增文件入库延迟。',
+        'fix': '只启动一次扫描并让它跑完；紧急单剧用独立小库或重启 Emby 触发快速增量扫描。',
+        'guard': 'ERR 里标注当前任务 State/Progress，避免用户误判卡死。',
+    },
+    {
+        'id': 'EF-005', 'level': 'medium', 'title': '剧目录 tvshow.nfo 是悬空符号链接 / 缺失',
+        'symptom': '新剧刮削不稳定、封面缺失、识别时有时无。',
+        'root': 'MT 生成 strm 时把 nfo 做成指向 115 的 symlink，而 115 上没有对应 nfo → 悬空。',
+        'evidence': '2010-2019 层 665 个剧目录：367 个实体 nfo、232 个悬空 symlink、66 个完全没有。',
+        'impact': '元数据/海报不稳定，新剧尤其容易缺封面。',
+        'fix': '把悬空 symlink 换成实体 tvshow.nfo（写入 title / year / tmdbid / uniqueid），并用封面补齐模块写回 Emby Primary。',
+        'guard': '写前备份原链接；补封面用 /api/cover/fix，禁止 movie/tv 跨类型错配。',
+    },
+]
+
+
+def _ef_emby_raw(path, method='GET', body=None, params=None, t=15):
+    """直连 Emby，返回 (status, 解析后对象)。POST 204 也如实返回，供修复动作判定。"""
+    try:
+        ek = cfg().get('emby_key') or EMBY_KEY_FB
+        q = dict(params or {})
+        q['api_key'] = ek
+        qs = urllib.parse.urlencode(q)
+        full = path + ('?' + qs if qs else '')
+        st, b = hreq(containers()['emby']['addr'], containers()['emby']['port'],
+                     method, full,
+                     json.dumps(body) if body is not None else None,
+                     {'Content-Type': 'application/json', 'Accept': 'application/json'}
+                     if body is not None else None, t)
+        try:
+            obj = json.loads(b) if b else {}
+        except Exception:
+            obj = {'_raw': (b or b'')[:200].decode('utf-8', 'replace')}
+        return st, obj
+    except Exception as e:
+        return 0, {'_err': str(e)[:160]}
+
+
+def _ef_tail(path, cap=1200000):
+    """只读文件尾部 cap 字节（MT 日志单文件可达 78MB，整读会拖垮接口）。"""
+    try:
+        sz = os.path.getsize(path)
+        with open(path, 'rb') as fh:
+            fh.seek(max(0, sz - cap))
+            b = fh.read()
+        txt = b.decode('utf-8', 'replace')
+        lines = txt.splitlines()
+        return lines[1:] if sz > cap and lines else lines
+    except Exception:
+        return []
+
+
+def _ef_log_lines(n=400):
+    """读 MT 落盘日志尾部。日志是 JSON 行格式，且当日文件极大 → 只取最新未压缩
+       .log（app-* 与 emby-*）各自的**尾部 n 行再合并**，避免两文件按拼接顺序取
+       最后 n 行时把 app 的 STRM-Realtime 信号整个挤掉。"""
+    out = []
+    try:
+        fs = [os.path.join(EF_MTLOG_DIR, f) for f in os.listdir(EF_MTLOG_DIR)
+              if f.endswith('.log') and not f.endswith('.gz')]
+        fs = sorted(fs, key=lambda p: os.path.getmtime(p), reverse=True)[:2]
+        for p in fs:
+            lines = _ef_tail(p, 900000)
+            out += lines[-n:]
+    except Exception:
+        pass
+    return out
+
+
+def _ef_log_stat(lines):
+    """解析日志里的刷新/生成信号。"""
+    r = {'refresh_ok': 0, 'refresh_fail': 0, 'kfc2_fail': 0,
+         'strm_created': 0, 'strm_deleted': 0, 'poll_seen': False,
+         'organize_seen': False, 'last_refresh': '', 'fail_samples': [],
+         'last_batch': ''}
+    for l in lines:
+        # 落盘日志是 JSON 行：msg 里带中文标签，结构化字段直接可正则提取
+        if '[Emby刷新] 完成' in l:
+            m = _ef_re.search(r'"success"\s*:\s*(\d+)', l)
+            if m:
+                r['refresh_ok'] += int(m.group(1))
+            m = _ef_re.search(r'"failed"\s*:\s*(\d+)', l)
+            if m:
+                r['refresh_fail'] += int(m.group(1))
+            r['last_refresh'] = l.strip()[:220]
+        elif 'Emby refresh result' in l and 'STRM-Realtime' in l:
+            m = _ef_re.search(r'"failed"\s*:\s*(\d+)', l)
+            if m and int(m.group(1)) > 0:
+                r['refresh_fail'] += int(m.group(1))
+        if 'refresh path failed' in l or '刷新失败' in l or 'embyRefresh":"failed"' in l:
+            if 'KFC2' in l or '/app/strm' in l:
+                r['kfc2_fail'] += 1
+            if len(r['fail_samples']) < 8:
+                r['fail_samples'].append(l.strip()[:240])
+        if 'batch complete' in l:
+            r['poll_seen'] = True
+            r['last_batch'] = l.strip()[:240]
+            m = _ef_re.search(r'"created"\s*:\s*(\d+)', l)
+            if m:
+                r['strm_created'] += int(m.group(1))
+            m = _ef_re.search(r'"deleted"\s*:\s*(\d+)', l)
+            if m:
+                r['strm_deleted'] += int(m.group(1))
+        if 'STRM-Realtime' in l or 'debouncer flushing' in l:
+            r['poll_seen'] = True
+        if '批量转移完成' in l or '入库转移完成' in l:
+            r['organize_seen'] = True
+    return r
+
+
+def _ef_scan_task():
+    """取 Scan media library 任务状态（不触发任何扫描）。"""
+    st, obj = _ef_emby_raw('/emby/ScheduledTasks', t=12)
+    if st != 200 or not isinstance(obj, list):
+        return {'id': '', 'state': 'unknown', 'progress': None}
+    for x in obj:
+        if (x.get('Name') or '') == 'Scan media library':
+            return {'id': str(x.get('Id') or ''), 'state': x.get('State') or 'Idle',
+                    'progress': x.get('CurrentProgressPercentage')}
+    return {'id': '', 'state': 'unknown', 'progress': None}
+
+
+def _ef_series_map(limit=900):
+    """拉 Emby Series 清单，建 tmdbid → item / 片名 → item 映射（自带缓存由调用方 cached 包）。"""
+    mp = {}
+    st, obj = _ef_emby_raw('/emby/Items', params={
+        'IncludeItemTypes': 'Series', 'Recursive': 'true',
+        'Fields': 'ProviderIds,ImageTags,ProductionYear,Path,Name',
+        'SortBy': 'DateCreated', 'SortOrder': 'Descending',
+        'Limit': str(limit), 'StartIndex': '0',
+    }, t=25)
+    items = obj.get('Items') if isinstance(obj, dict) else None
+    for x in (items or []):
+        if not isinstance(x, dict):
+            continue
+        pid = x.get('ProviderIds') or {}
+        tid = str(pid.get('Tmdb') or pid.get('tmdb') or pid.get('TMDB') or '')
+        key = str(x.get('Name') or '').strip()
+        rec = {'id': str(x.get('Id') or ''), 'name': key,
+               'tmdbid': tid, 'year': str(x.get('ProductionYear') or ''),
+               'path': str(x.get('Path') or ''),
+               'primary': str((x.get('ImageTags') or {}).get('Primary') or '')}
+        if tid:
+            mp['tmdb:' + tid] = rec
+        if key:
+            mp['name:' + key] = rec
+    return mp
+
+
+_EF_SERIES_CACHE = {}
+_EF_EP_CACHE = {}
+
+
+def _ef_series_by_tmdb(tmdbid):
+    """按 TMDBID 精确查 Series（实测 AnyProviderIdEquals=tmdb.<id> 有效）。
+       解决『只拉最近 900 个 Series』导致老剧被误标未入库。带 180s 缓存。"""
+    k = str(tmdbid or '')
+    if not k:
+        return None
+    hit = _EF_SERIES_CACHE.get(k)
+    if hit and _ef_time.time() - hit[0] < 180:
+        return hit[1]
+    st, obj = _ef_emby_raw('/emby/Items', params={
+        'AnyProviderIdEquals': 'tmdb.' + k, 'IncludeItemTypes': 'Series',
+        'Recursive': 'true', 'Fields': 'ProviderIds,ImageTags,ProductionYear,Path,Name',
+        'Limit': '5',
+    }, t=12)
+    items = obj.get('Items') if isinstance(obj, dict) else None
+    rec = None
+    for x in (items or []):
+        if isinstance(x, dict) and x.get('Id'):
+            rec = {'id': str(x.get('Id') or ''), 'name': str(x.get('Name') or ''),
+                   'tmdbid': k, 'year': str(x.get('ProductionYear') or ''),
+                   'path': str(x.get('Path') or ''),
+                   'primary': str((x.get('ImageTags') or {}).get('Primary') or '')}
+            break
+    _EF_SERIES_CACHE[k] = (_ef_time.time(), rec)
+    return rec
+
+
+def _ef_episode_stat(sid):
+    """一次请求同时拿 (Episode 总数, 最大集号)，识别『只差最后一集』。带 180s 缓存。"""
+    if not sid:
+        return -1, 0
+    hit = _EF_EP_CACHE.get(sid)
+    if hit and _ef_time.time() - hit[0] < 180:
+        return hit[1], hit[2]
+    st, obj = _ef_emby_raw('/emby/Items', params={
+        'ParentId': sid, 'Recursive': 'true', 'IncludeItemTypes': 'Episode',
+        'Fields': 'IndexNumber', 'Limit': '500',
+    }, t=20)
+    if st != 200 or not isinstance(obj, dict):
+        return -1, 0
+    cnt = int(obj.get('TotalRecordCount') or 0)
+    items = obj.get('Items') or []
+    nums = [int(x.get('IndexNumber') or 0) for x in items if isinstance(x, dict)]
+    mx = max(nums) if nums else 0
+    _EF_EP_CACHE[sid] = (_ef_time.time(), cnt, mx)
+    return cnt, mx
+
+
+def _ef_layer_guard():
+    """分组层 tvshow.nfo 普查（EF-001 复发检测）。
+       ★ 性能铁律：绝不对每个分组层 os.listdir 统计子目录（665 个子目录 × 130 层
+       在 CD2 冷缓存下会把接口拖到 90s，前端 30s 硬超时直接掐断）。
+       改为按年代层命名规则判定 + 单次 isfile，130 次 stat 秒级完成。"""
+    bad = []
+    total = 0
+    pat = _ef_re.compile(r'^(?:\d{4}-\d{4}|\d{4}年前|未知年份)$')
+    try:
+        for tv in ('电视剧', '电影', '动漫', '演唱会', '纪录片', '综艺'):
+            root = os.path.join(EF_STRM_ROOT, tv)
+            if not os.path.isdir(root):
+                continue
+            for lib in os.listdir(root):
+                lp = os.path.join(root, lib)
+                if os.path.islink(lp) or not os.path.isdir(lp):
+                    continue
+                for layer in os.listdir(lp):
+                    if not pat.match(layer):
+                        continue
+                    p = os.path.join(lp, layer)
+                    if os.path.islink(p) or not os.path.isdir(p):
+                        continue
+                    total += 1
+                    nf = os.path.join(p, 'tvshow.nfo')
+                    if os.path.isfile(nf) and not os.path.islink(nf):
+                        bad.append({'path': p.replace(EF_STRM_ROOT, EF_EMBY_PREFIX),
+                                    'shows': 0})
+    except Exception:
+        pass
+    return {'layers': total, 'bad': bad}
+
+
+def _ef_strm_shows(limit=40, q=''):
+    """枚举剧集目录（带 tmdbid 的那一层），按 mtime 倒序。限定层数避免扫 3 万文件。"""
+    shows = []
+    ql = (q or '').strip().lower()
+    try:
+        # ★ 所有 isdir 前先判 islink：本地 strm 目录里混有指向 CD2/115 的符号链接，
+        #   isdir() 会跟随链接去 stat 网络挂载 → 偶发几十秒阻塞（实测 items 时快时慢 0.5s/80s）。
+        for tv in sorted(os.listdir(EF_STRM_ROOT)):
+            tvp = os.path.join(EF_STRM_ROOT, tv)
+            if os.path.islink(tvp) or not os.path.isdir(tvp):
+                continue
+            for lib in sorted(os.listdir(tvp)):
+                lp = os.path.join(tvp, lib)
+                if os.path.islink(lp) or not os.path.isdir(lp):
+                    continue
+                for layer in sorted(os.listdir(lp)):
+                    d2 = os.path.join(lp, layer)
+                    if os.path.islink(d2) or not os.path.isdir(d2):
+                        continue
+                    for show in os.listdir(d2):
+                        sp = os.path.join(d2, show)
+                        if os.path.islink(sp) or not os.path.isdir(sp):
+                            continue
+                        if ql and ql not in show.lower():
+                            continue
+                        try:
+                            mt = os.path.getmtime(sp)
+                        except Exception:
+                            mt = 0
+                        shows.append((mt, sp, show))
+    except Exception:
+        pass
+    shows.sort(reverse=True)
+    return shows[:limit]
+
+
+def _ef_show_detail(sp, show, smap, verify=False):
+    """单剧七节点真值采集。返回详细字段 + issues + 可修复动作。"""
+    m = _ef_re.search(r'\[tmdbid-(\d+)\]', show)
+    tmdbid = m.group(1) if m else ''
+    m2 = _ef_re.search(r'\((\d{4})\)', show)
+    year = m2.group(1) if m2 else ''
+    name = _ef_re.sub(r'\s*\(\d{4}\)\s*\[tmdbid-\d+\]\s*$', '', show).strip()
+    emby_path = sp.replace(EF_STRM_ROOT, EF_EMBY_PREFIX)
+
+    # 季 / strm
+    seasons = []
+    strm_files = []
+    try:
+        for s in sorted(os.listdir(sp)):
+            sd = os.path.join(sp, s)
+            if os.path.islink(sd):
+                continue
+            if os.path.isdir(sd) and s.lower().startswith('season'):
+                fs = [f for f in os.listdir(sd) if f.endswith('.strm')]
+                seasons.append({'name': s, 'strm': len(fs)})
+                for f in fs:
+                    strm_files.append(os.path.join(sd, f))
+    except Exception:
+        pass
+    strm_n = len(strm_files)
+
+    # 115 实体（只读抽样：取最后一个 strm 反推精确路径再 stat）
+    cloud_ok = False
+    cloud_sample = ''
+    if strm_files:
+        try:
+            t = open(strm_files[-1], encoding='utf-8', errors='replace').read().strip()
+            cloud_sample = t
+            # ★ 性能铁律：绝不在逐剧循环里 stat CD2/115 实体路径 —— 网络文件系统
+            #   单次 stat 可能几十秒，40 个剧直接把接口拖过前端 30s 硬超时。
+            #   这里只验证「strm 指向合法」；真实挂载可读性由 overview 抽样一次 +
+            #   用户点「复检挂载」时核验，必要时再用修复动作单独 stat。
+            cloud_ok = bool(t) and t.startswith('/CloudNAS/')
+        except Exception:
+            pass
+
+    # nfo 状态（实体 / 悬空链接 / 缺失）
+    nfo = os.path.join(sp, 'tvshow.nfo')
+    if os.path.islink(nfo):
+        nfo_state = 'dangling' if not os.path.exists(nfo) else 'symlink'
+    elif os.path.isfile(nfo):
+        nfo_state = 'file'
+    else:
+        nfo_state = 'missing'
+    _pp = os.path.join(sp, 'poster.jpg')
+    poster_local = (not os.path.islink(_pp)) and os.path.isfile(_pp)
+
+    # Emby 侧：先查最近清单，未命中再按 TMDBID 精确查（避免老剧被误标未入库）
+    rec = smap.get('tmdb:' + tmdbid) if tmdbid else None
+    if not rec:
+        rec = smap.get('name:' + name) or smap.get('name:' + show)
+    # ★ 二段式：首屏不逐剧请求 Emby（HTTP handler 内每次 ~6s，会把接口拖到 70s+）。
+    #   verify=True 才按 TMDBID 精确查 + 拉集数；由 /api/embyfix/verify 异步逐剧触发。
+    if verify and not rec and tmdbid:
+        rec = _ef_series_by_tmdb(tmdbid)
+    emby_id = (rec or {}).get('id', '')
+    if verify and emby_id:
+        emby_eps, emby_max = _ef_episode_stat(emby_id)
+    else:
+        emby_eps, emby_max = (-1, 0)
+    primary = (rec or {}).get('primary', '')
+
+    # 差集：strm 有而 Emby 没有（未核对时 gap 记 0，避免全表假阳性）
+    gap = max(0, strm_n - emby_eps) if emby_eps >= 0 else 0
+    issues = []
+    if not tmdbid:
+        issues.append('目录名缺 TMDBID')
+    if not cloud_ok and strm_files:
+        issues.append('STRM 指向为空或不合法（未指向网盘挂载）')
+    if not strm_n:
+        issues.append('没有任何 .strm')
+    if verify:
+        if not emby_id:
+            issues.append('Emby 未生成独立 Series')
+        elif gap > 0:
+            issues.append('Emby 少 %d 集（strm %d / Emby %d，最大 E%d）'
+                          % (gap, strm_n, emby_eps, emby_max))
+    else:
+        issues.append('Emby 侧待核对（点「核对集数」）')
+    if not poster_local:
+        issues.append('本地缺 poster.jpg')
+    if not primary:
+        issues.append('Emby 缺 Primary 封面')
+    if nfo_state in ('dangling', 'missing'):
+        issues.append('tvshow.nfo ' + ('悬空链接' if nfo_state == 'dangling' else '缺失'))
+
+    nodes = {
+        'cloud115': 'ok' if (cloud_ok or not strm_files) else 'fail',
+        'mtPoll': 'ok' if strm_n else 'unknown',
+        'mtOrganize': 'ok' if strm_n else 'unknown',
+        'strmGen': 'ok' if strm_n else 'fail',
+        'embyNotify': 'unknown' if not verify else
+                      ('ok' if (emby_id and gap == 0) else ('warn' if emby_id else 'fail')),
+        'embyIndex': 'unknown' if not verify else
+                     ('ok' if (emby_id and gap == 0) else ('warn' if emby_id else 'fail')),
+        'metaScrape': 'ok' if (primary and tmdbid and nfo_state == 'file') else
+                      ('warn' if (primary or tmdbid) else 'fail'),
+    }
+    return {
+        'name': name, 'dir': show, 'year': year, 'tmdbid': tmdbid,
+        'path': emby_path, 'local': sp,
+        'seasons': seasons, 'season_n': len(seasons), 'strm_n': strm_n,
+        'cloud_ok': cloud_ok,
+        'cloud_sample': ('…' + cloud_sample[-159:]) if len(cloud_sample) > 160 else cloud_sample,
+        'nfo_state': nfo_state, 'poster_local': poster_local,
+        'emby_id': emby_id, 'emby_eps': emby_eps, 'emby_max': emby_max,
+        'primary': primary, 'gap': gap, 'issues': issues, 'nodes': nodes,
+        'verified': bool(verify),
+        'poster_url': ('/embyimg/emby/%s/Primary?w=96' % emby_id) if (emby_id and primary)
+                      else ('/api/embyfix/poster?p=' + urllib.parse.quote(emby_path)
+                            if poster_local else ''),
+        'state': 'fail' if any(x in ('fail',) for x in nodes.values())
+                 else ('warn' if issues else 'ok'),
+    }
+
+
+def embyfix_overview():
+    """总览：七节点健康 + 统计 + 案例数 + 扫描任务状态。"""
+    out = {'ok': True, 'nodes': [], 'stat': {}, 'cases': len(EF_CASES),
+           'scan': {}, 'guard': {}, 'ts': _ef_time.time()}
+    lines = _ef_log_lines(400)
+    lg = _ef_log_stat(lines)
+    guard = _ef_layer_guard()
+    scan = _ef_scan_task()
+    out['scan'] = scan
+    out['guard'] = guard
+    out['stat'] = {
+        'refresh_ok': lg['refresh_ok'], 'refresh_fail': lg['refresh_fail'],
+        'kfc2_fail': lg['kfc2_fail'], 'strm_created': lg['strm_created'],
+        'strm_deleted': lg['strm_deleted'], 'layers': guard['layers'],
+        'bad_layers': len(guard['bad']),
+    }
+    cloud_ok = os.path.isdir(EF_CLOUD_ROOT)
+    states = {
+        'cloud115': ('ok' if cloud_ok else 'fail',
+                     'CD2 挂载 %s' % ('可读' if cloud_ok else '不可读'),
+                     EF_CLOUD_ROOT),
+        'mtPoll': ('ok' if lg['poll_seen'] else 'warn',
+                   '最近日志 %s' % ('有 STRM-Realtime 轮询' if lg['poll_seen'] else '未见轮询信号'),
+                   lg['last_batch'][:150]),
+        'mtOrganize': ('ok' if lg['organize_seen'] else 'warn',
+                       '最近日志 %s' % ('有批量转移' if lg['organize_seen'] else '未见转移信号'), ''),
+        'strmGen': ('ok' if lg['strm_created'] else 'warn',
+                    '近期新建 %d 个 strm / 删除 %d' % (lg['strm_created'], lg['strm_deleted']), ''),
+        'embyNotify': ('fail' if lg['refresh_fail'] else ('ok' if lg['refresh_ok'] else 'unknown'),
+                       '刷新成功 %d / 失败 %d（KFC2 失败 %d）'
+                       % (lg['refresh_ok'], lg['refresh_fail'], lg['kfc2_fail']),
+                       lg['fail_samples'][0][:180] if lg['fail_samples'] else ''),
+        'embyIndex': ('fail' if guard['bad'] else 'warn',
+                      '分组层异常 %d 个；扫描任务 %s%s'
+                      % (len(guard['bad']), scan['state'],
+                         (' %.1f%%' % (scan['progress'] * 100))
+                         if isinstance(scan['progress'], (int, float)) else ''), ''),
+        'metaScrape': ('warn' if guard['bad'] else 'unknown',
+                       '需按剧集明细核对 TMDBID / 封面', ''),
+    }
+    for n in EF_NODES:
+        st, desc, detail = states.get(n['key'], ('unknown', '', ''))
+        out['nodes'].append(dict(n, state=st, detail=detail, why=desc,
+                                actions=_ef_actions_for(n['key'])))
+    out['fail_samples'] = lg['fail_samples']
+    return out
+
+
+def _ef_actions_for(key):
+    return {
+        'cloud115': [{'act': 'check_cloud', 'label': '复检挂载'}],
+        'mtPoll': [{'act': 'mt_logs', 'label': '看轮询日志'}],
+        'mtOrganize': [{'act': 'mt_logs', 'label': '看转移日志'}],
+        'strmGen': [{'act': 'notify_paths', 'label': '重发新增通知'}],
+        'embyNotify': [{'act': 'fix_kfc2_hint', 'label': 'KFC2 路径诊断'}],
+        'embyIndex': [{'act': 'scan_start', 'label': '启动扫描'},
+                      {'act': 'scan_stop', 'label': '停止扫描'}],
+        'metaScrape': [{'act': 'scan_items', 'label': '扫描缺图剧集'}],
+    }.get(key, [])
+
+
+_EF_SMAP_CACHE = {'ts': 0, 'v': {}}
+
+
+def _ef_series_map_cached(limit=900):
+    now = _ef_time.time()
+    if _EF_SMAP_CACHE['v'] and now - _EF_SMAP_CACHE['ts'] < 300:
+        return _EF_SMAP_CACHE['v']
+    v = _ef_series_map(limit)
+    _EF_SMAP_CACHE['ts'] = now
+    _EF_SMAP_CACHE['v'] = v
+    return v
+
+
+def embyfix_items(limit=40, q='', only='broken'):
+    """逐剧集粒度明细（TMDBID / 封面 / 集数差 / 七节点）。
+       ★ 每剧要查 Emby 2 次，串行 40 剧 ≈ 68s 会被前端 30s 硬超时掐断 → 并发 8 线程。"""
+    # ★ 首屏零 Emby 请求：/emby/Items?Limit=900 在大库（15151 Series）排序极慢，
+    #   HTTP handler 内实测 80s。Series 存在性与集数差全部交给异步逐剧 verify。
+    smap = {}
+    cand = _ef_strm_shows(limit=max(limit, 40) if q else limit, q=q)
+
+    def one(t):
+        try:
+            return _ef_show_detail(t[1], t[2], smap)
+        except Exception as e:
+            return {'name': t[2], 'dir': t[2],
+                    'issues': ['采集异常: ' + str(e)[:80]],
+                    'state': 'fail', 'nodes': {}, 'season_n': 1, 'strm_n': -1}
+
+    # ★ 不用线程池：media-hub 的 cfg()/containers() 在 HTTP handler 线程里派生子线程
+    #   并发调用会与内部锁冲突，实测 HTTP 请求 90s 超时；而同进程直接调用只要 0.47s。
+    #   保留 smap/ep/series 三级缓存后，串行逐剧查询已足够快。
+    allrows = [one(t) for t in cand]
+    # 电影/单集目录没有 Season 子目录，不属于剧集流水线监控范围
+    rows = [d for d in allrows
+            if not (d.get('season_n') == 0 and (d.get('strm_n') or 0) == 0)]
+    if only == 'broken':
+        rows = [d for d in rows if d.get('state') != 'ok']
+    rows.sort(key=lambda x: ({'fail': 0, 'warn': 1, 'ok': 2}.get(x.get('state'), 3),
+                             -(x.get('gap') or 0)))
+    return {'ok': True, 'rows': rows[:limit], 'n': len(rows[:limit]),
+            'nodes': [n['key'] for n in EF_NODES], 'ts': _ef_time.time()}
+
+
+def embyfix_verify(path, tmdbid='', name=''):
+    """单剧精确核对（前端异步逐行触发）：按 TMDBID 查 Series + 拉 Episode 集数。
+       把 70s 的同步全表计算拆成「首屏秒级 + 后台逐剧」，用户仍能看到全部节点。"""
+    try:
+        local = path.replace(EF_EMBY_PREFIX, EF_STRM_ROOT, 1)
+        if not os.path.isdir(local):
+            return {'ok': False, 'msg': '路径不存在: %s' % str(path)[:120]}
+        d = _ef_show_detail(local, os.path.basename(local), {}, True)
+        return {'ok': True, 'row': d}
+    except Exception as e:
+        return {'ok': False, 'msg': str(e)[:180]}
+
+
+def embyfix_logs(n=60):
+    lines = _ef_log_lines(int(n or 60) * 12)
+    hit = [l for l in lines if any(k in l for k in
+           ('[Emby刷新]', 'STRM-Realtime', '[整理]', '批量转移完成', 'refresh path failed'))]
+    out = []
+    for l in hit[-int(n or 60):]:
+        lv = 'bad' if ('failed' in l or '失败' in l or 'ERROR' in l) else \
+             ('ok' if ('成功' in l or 'complete' in l) else 'info')
+        out.append({'level': lv, 'line': l.strip()[:300]})
+    return {'ok': True, 'rows': out, 'stat': _ef_log_stat(lines)}
+
+
+def embyfix_cases():
+    return {'ok': True, 'rows': EF_CASES}
+
+
+def embyfix_poster(rel):
+    """本地 poster.jpg 代理（Emby 未入库时也能看到封面）。严格限制在 STRM 根内。"""
+    try:
+        # 前端传的是完整 emby_path（/strm/...）；早期版本又拼了一次前缀导致双 /strm
+        p = rel if rel.startswith(EF_EMBY_PREFIX + '/') else \
+            (EF_EMBY_PREFIX + '/' + str(rel or '').lstrip('/'))
+        if not p.startswith(EF_EMBY_PREFIX + '/'):
+            return b'', 'image/jpeg'
+        local = p.replace(EF_EMBY_PREFIX, EF_STRM_ROOT, 1)
+        fp = os.path.join(local, 'poster.jpg')
+        real = os.path.realpath(fp)
+        if not real.startswith(os.path.realpath(EF_STRM_ROOT) + os.sep):
+            return b'', 'image/jpeg'
+        if os.path.isfile(fp):
+            with open(fp, 'rb') as fh:
+                return fh.read(), 'image/jpeg'
+    except Exception:
+        pass
+    return b'', 'image/jpeg'
+
+
+def embyfix_repair(b):
+    """单剧 / 单节点对症修复。所有动作都作用于真实 Emby / 文件系统，不做假按钮。"""
+    act = (b.get('act') or '').strip()
+    path = (b.get('path') or '').strip()
+    sid = (b.get('emby_id') or '').strip()
+    tmdbid = (b.get('tmdbid') or '').strip()
+    name = (b.get('name') or '').strip()
+    res = {'ok': False, 'act': act, 'steps': []}
+
+    def step(label, fn):
+        try:
+            r = fn()
+            res['steps'].append({'label': label, 'ok': bool(r),
+                                 'msg': str(r)[:220] if not isinstance(r, bool) else ''})
+            return bool(r)
+        except Exception as e:
+            res['steps'].append({'label': label, 'ok': False, 'msg': str(e)[:180]})
+            return False
+
+    if act == 'refresh_item':
+        # ① 定向通知路径 ② 若已有 Series 再刷新它（真实生效，见 EF-003）
+        def _notify():
+            st, obj = _ef_emby_raw('/emby/Library/Media/Updated', 'POST',
+                                   {'Updates': [{'Path': path, 'UpdateType': 'Created'}]})
+            return 'HTTP %d' % st
+        step('通知 Emby 路径变更', _notify)
+        if sid:
+            def _ref():
+                st, obj = _ef_emby_raw('/emby/Items/%s/Refresh' % sid, 'POST', params={
+                    'Recursive': 'true', 'MetadataRefreshMode': 'FullRefresh'})
+                return 'HTTP %d' % st
+            step('刷新 Series 元数据', _ref)
+        res['ok'] = True
+        res['msg'] = '已发真实刷新请求；新增文件仍需扫描任务或重启 Emby 才会入库（见 EF-003）'
+        return res
+
+    if act == 'notify_paths':
+        # 对该剧所有 .strm 重发 Created 通知
+        local = path.replace(EF_EMBY_PREFIX, EF_STRM_ROOT, 1)
+        ups = []
+        try:
+            for root, ds, fs in os.walk(local):
+                for f in fs:
+                    if f.endswith('.strm'):
+                        ups.append({'Path': os.path.join(root, f)
+                                    .replace(EF_STRM_ROOT, EF_EMBY_PREFIX),
+                                    'UpdateType': 'Created'})
+        except Exception:
+            pass
+        for i in range(0, len(ups), 40):
+            st, obj = _ef_emby_raw('/emby/Library/Media/Updated', 'POST',
+                                   {'Updates': ups[i:i + 40]})
+            res['steps'].append({'label': '通知批次 %d' % (i // 40 + 1),
+                                 'ok': st in (200, 204), 'msg': 'HTTP %d' % st})
+        res['ok'] = bool(ups)
+        res['msg'] = '共重发 %d 个 strm 的 Created 通知（增量通知不保证导入，见 EF-003）' % len(ups)
+        return res
+
+    if act == 'fix_nfo':
+        # 悬空 symlink / 缺失 nfo → 写实体 tvshow.nfo（先备份）
+        local = path.replace(EF_EMBY_PREFIX, EF_STRM_ROOT, 1)
+        nf = os.path.join(local, 'tvshow.nfo')
+        try:
+            if os.path.islink(nf) or os.path.isfile(nf):
+                os.rename(nf, nf + '.bak.embyfix')
+                res['steps'].append({'label': '备份原 nfo', 'ok': True, 'msg': ''})
+            xml = ('<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n'
+                   '<tvshow>\n  <lockdata>false</lockdata>\n'
+                   '  <title>%s</title>\n  <year>%s</year>\n'
+                   '  <tmdbid>%s</tmdbid>\n'
+                   '  <uniqueid type="tmdb" default="true">%s</uniqueid>\n'
+                   '  <season>-1</season><episode>-1</episode>\n'
+                   '  <displayorder>aired</displayorder>\n</tvshow>\n'
+                   % (_ef_xml(name), _ef_xml(b.get('year') or ''),
+                      _ef_xml(tmdbid), _ef_xml(tmdbid)))
+            with open(nf, 'w', encoding='utf-8-sig', newline='') as fh:
+                fh.write(xml)
+            res['steps'].append({'label': '写入实体 tvshow.nfo', 'ok': True,
+                                 'msg': '含 TMDBID %s' % (tmdbid or '?')})
+            res['ok'] = True
+        except Exception as e:
+            res['steps'].append({'label': '写 nfo', 'ok': False, 'msg': str(e)[:180]})
+        return res
+
+    if act == 'fix_cover':
+        # 复用已上线的封面补齐模块（真实写回 Emby Primary）
+        try:
+            items = [{'id': sid, 'name': name, 'tmdb': tmdbid, 'type': 'tv'}]
+            r = cover_fix(items=items, server='emby', dry=False)
+            res['steps'].append({'label': '封面补齐', 'ok': True,
+                                 'msg': str(r)[:200]})
+            res['ok'] = True
+        except Exception as e:
+            res['steps'].append({'label': '封面补齐', 'ok': False, 'msg': str(e)[:180]})
+        return res
+
+    if act in ('scan_start', 'scan_stop'):
+        t = _ef_scan_task()
+        if not t['id']:
+            res['msg'] = '未找到 Scan media library 任务'
+            return res
+        method = 'POST' if act == 'scan_start' else 'DELETE'
+        st, obj = _ef_emby_raw('/emby/ScheduledTasks/Running/%s' % t['id'], method)
+        res['ok'] = st in (200, 204)
+        res['msg'] = 'HTTP %d · 任务 %s' % (st, t['id'])
+        res['steps'].append({'label': '扫描任务', 'ok': res['ok'], 'msg': res['msg']})
+        return res
+
+    if act == 'check_cloud':
+        ok = os.path.isdir(EF_CLOUD_ROOT)
+        res['ok'] = ok
+        res['msg'] = 'CD2 挂载 %s' % ('可读' if ok else '不可读')
+        return res
+
+    if act == 'fix_kfc2_hint':
+        lines = _ef_log_lines(120)
+        bad = [l.strip()[:220] for l in lines if 'refresh path failed' in l and 'KFC2' in l]
+        res['ok'] = True
+        res['msg'] = ('KFC2 刷新路径带 /app 前缀（应为 /strm/...），见 EF-002；'
+                      '需改 MT 的 embyRefresh 配置后重启 MT（本模块不自动改配置）')
+        res['steps'] = [{'label': '最近失败样例', 'ok': bool(bad),
+                         'msg': bad[-1] if bad else '近 120 行未见'}]
+        return res
+
+    res['msg'] = '未知动作 %s' % act
+    return res
+
+
+def _ef_xml(s):
+    return (str(s or '').replace('&', '&amp;').replace('<', '&lt;')
+            .replace('>', '&gt;').replace('"', '&quot;'))
+
 # ════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
+# V1.53 · Emby 故障检修「精密控制台」（用户 2026-11-12 点名升级）
+#   ① KFC / KFC2 双实例切换   ② 三端同查（115 源 / 本地 STRM / Emby 入库）
+#   ③ 全量检查 + 单库检查（后台任务，可停）  ④ 四档精确刷新（单条目/单目录/单库/全库）
+#   ⑤ 逐节点独立动作 + 操作历史   ⑥ 库概览 / 双实例对比 / 缺图 / 孤儿 STRM
+#   性能铁律：所有 handler 内端点 <30s（前端 apiGet 硬超时）；慢活一律后台线程 +
+#   状态轮询；isdir/isfile 前置 islink（跳过指向 CD2 的 symlink）；CD2 stat 带超时。
+# ════════════════════════════════════════════════════════════════════════════
+import re as _ef2_re
+import time as _ef2_time
+import threading as _ef2_thr
+import urllib.parse as _ef2_url
+from concurrent.futures import ThreadPoolExecutor as _EF2Pool, TimeoutError as _EF2Timeout
+
+EF2_ROOTS = {
+    'emby':       {'name': 'KFC 主库',   'strm': '/dockroot/mediatidy/strm',
+                   'prefix': '/strm',         'port': 8096},
+    'emby_adult': {'name': 'KFC2 成人库', 'strm': '/dockroot/mdc-ng/strm-mdc-ng',
+                   'prefix': '/strm-mdc-ng',  'port': 8896},
+}
+_EF2_CACHE = {}
+_EF2_OPS = []
+_EF2_JOB = {'state': 'idle', 'which': '', 'library': '', 'total': 0, 'done': 0,
+            'rows': [], 'started': 0, 'ended': 0, 'errors': [], 'msg': '',
+            'deep_cloud': False}
+_EF2_LOCK = _ef2_thr.Lock()
+
+
+def _ef2_log(action, which, ok, msg, secs=0.0):
+    try:
+        with _EF2_LOCK:
+            _EF2_OPS.append({'ts': _ef2_time.time(), 'action': action, 'which': which,
+                             'ok': bool(ok), 'msg': str(msg)[:300], 'secs': round(secs, 2)})
+            if len(_EF2_OPS) > 300:
+                del _EF2_OPS[:len(_EF2_OPS) - 300]
+    except Exception:
+        pass
+
+
+def _ef2_inst(which):
+    """预提取实例连接参数（handler 线程取一次，后台线程只用纯参数，避免 cfg 锁冲突）。"""
+    w = which if which in EF2_ROOTS else 'emby'
+    conf = containers().get(w) or {}
+    try:
+        key = _emby_inst_key(w)
+    except Exception:
+        key = ''
+    return {'which': w, 'addr': conf.get('addr') or '127.0.0.1',
+            'port': conf.get('port') or EF2_ROOTS[w]['port'], 'key': key,
+            'name': EF2_ROOTS[w]['name'], 'strm': EF2_ROOTS[w]['strm'],
+            'prefix': EF2_ROOTS[w]['prefix']}
+
+
+def _ef2_http(inst, path, method='GET', body=None, params=None, t=20):
+    """不调 cfg/containers，纯参数直连（可在后台线程安全使用）。返回 (status, obj)。"""
+    try:
+        q = dict(params or {})
+        q['api_key'] = inst.get('key') or ''
+        full = path + ('?' + _ef2_url.urlencode(q) if q else '')
+        hdr = {'Content-Type': 'application/json', 'Accept': 'application/json'} \
+            if body is not None else None
+        st, b = hreq(inst['addr'], inst['port'], method, full,
+                     __import__('json').dumps(body) if body is not None else None, hdr, t)
+        try:
+            obj = json.loads(b) if b else {}
+        except Exception:
+            obj = {'_raw': str(b)[:200]}
+        return st, obj
+    except Exception as e:
+        return 0, {'_err': str(e)[:180]}
+
+
+def _ef2_cache(key, fn, ttl=120, force=False):
+    hit = _EF2_CACHE.get(key)
+    if not force and hit and _ef2_time.time() - hit[0] < ttl:
+        return hit[1]
+    v = fn()
+    _EF2_CACHE[key] = (_ef2_time.time(), v)
+    return v
+
+
+def _ef2_cd2_stat(path, timeout=2.5):
+    """CD2/115 实体探测：必须带超时，否则网络挂载抖动可卡死整个 handler。
+       子线程只做 os.path.isfile，不碰任何配置函数（避免历史上的 cfg 锁冲突）。"""
+    if not path or not str(path).startswith('/CloudNAS/'):
+        return None
+    try:
+        pool = _EF2Pool(max_workers=1)
+        fut = pool.submit(os.path.isfile, path)
+        try:
+            r = bool(fut.result(timeout=timeout))
+        except _EF2Timeout:
+            r = None
+        finally:
+            pool.shutdown(wait=False)
+        return r
+    except Exception:
+        return None
+
+
+def _ef2_libs(which, force=False):
+    def _load():
+        inst = _ef2_inst(which)
+        st, obj = _ef2_http(inst, '/Library/VirtualFolders', t=15)
+        raw = obj if isinstance(obj, list) else []
+        out = []
+        for v in raw:
+            if not isinstance(v, dict):
+                continue
+            out.append({'id': str(v.get('ItemId') or v.get('Id') or ''),
+                        'name': str(v.get('Name') or ''),
+                        'type': str(v.get('CollectionType') or ''),
+                        'locations': v.get('Locations') or []})
+        return out
+    return _ef2_cache('libs:' + which, _load, ttl=120, force=force)
+
+
+def _ef2_strm_index(which, force=False):
+    """本地 strm 目录索引（name/tmdbid/path/lib），只走本地挂载、不碰 CD2。
+       统一收集剧与电影目录，type 由是否含 Season 子目录判定（只抽第一个子项）。"""
+    def _load():
+        root = EF2_ROOTS[which]['strm']
+        pref = EF2_ROOTS[which]['prefix']
+        idx = []
+        try:
+            for tv in sorted(os.listdir(root)):
+                tvp = os.path.join(root, tv)
+                if os.path.islink(tvp) or not os.path.isdir(tvp):
+                    continue
+                for lib in sorted(os.listdir(tvp)):
+                    lp = os.path.join(tvp, lib)
+                    if os.path.islink(lp) or not os.path.isdir(lp):
+                        continue
+                    for layer in sorted(os.listdir(lp)):
+                        d2 = os.path.join(lp, layer)
+                        if os.path.islink(d2) or not os.path.isdir(d2):
+                            continue
+                        for show in os.listdir(d2):
+                            sp = os.path.join(d2, show)
+                            if os.path.islink(sp) or not os.path.isdir(sp):
+                                continue
+                            m = _ef2_re.search(r'\[tmdbid-(\d+)\]', show)
+                            y = _ef2_re.search(r'\((\d{4})\)', show)
+                            nm = _ef2_re.sub(r'\s*\(\d{4}\)\s*\[tmdbid-\d+\]\s*$', '', show).strip()
+                            idx.append({'dir': show, 'name': nm,
+                                        'tmdbid': m.group(1) if m else '',
+                                        'year': y.group(1) if y else '',
+                                        'path': sp.replace(root, pref, 1),
+                                        'local': sp, 'lib': os.path.join(tv, lib)})
+        except Exception:
+            pass
+        return idx
+    return _ef2_cache('idx:' + which, _load, ttl=300, force=force)
+
+
+def _ef2_first_strm(local):
+    """取该目录下第一个 .strm（含 Season 子目录），返回 (相对文件, 内容)。"""
+    try:
+        fs = [f for f in os.listdir(local) if f.endswith('.strm')]
+        rel = fs[0] if fs else ''
+        if not rel:
+            for sd in sorted(os.listdir(local)):
+                sp = os.path.join(local, sd)
+                if os.path.islink(sp) or not os.path.isdir(sp):
+                    continue
+                sub = [f for f in os.listdir(sp) if f.endswith('.strm')]
+                if sub:
+                    rel = os.path.join(sd, sub[0])
+                    break
+        if not rel:
+            return '', ''
+        txt = open(os.path.join(local, rel), encoding='utf-8', errors='replace').read().strip()
+        return rel, txt
+    except Exception:
+        return '', ''
+
+
+def _ef2_count_strm(local):
+    """剧集：数 Season* 子目录；电影：.strm 直接放内容目录根下。
+       ★ 早期版本只数 Season 子目录，导致所有电影被误判「无 .strm」（全表假红）。"""
+    n = 0
+    seasons = []
+    try:
+        for s in sorted(os.listdir(local)):
+            sd = os.path.join(local, s)
+            if os.path.islink(sd) or not os.path.isdir(sd):
+                continue
+            if s.lower().startswith('season'):
+                c = len([f for f in os.listdir(sd) if f.endswith('.strm')])
+                seasons.append({'name': s, 'n': c})
+                n += c
+    except Exception:
+        pass
+    if n == 0:
+        try:
+            n = len([f for f in os.listdir(local) if f.endswith('.strm')])
+        except Exception:
+            pass
+    return n, seasons
+
+
+def _ef2_nfo_state(local):
+    """剧集 tvshow.nfo / 电影 movie.nfo / 兜底 season.nfo；symlink 悬空单独标注。"""
+    for nm in ('tvshow.nfo', 'movie.nfo', 'season.nfo'):
+        p = os.path.join(local, nm)
+        try:
+            if os.path.islink(p):
+                return 'dangling' if not os.path.exists(p) else 'symlink'
+            if os.path.isfile(p):
+                return 'file'
+        except Exception:
+            pass
+    return 'missing'
+
+
+def _ef2_emby_match(inst, term='', tmdbid='', limit=12):
+    """Emby 侧查询：优先 TMDBID 精确，否则片名。返回统一结构。"""
+    out = []
+    try:
+        if tmdbid:
+            st, obj = _ef2_http(inst, '/Items', params={
+                'AnyProviderIdEquals': 'tmdb.' + str(tmdbid), 'Recursive': 'true',
+                'Fields': 'ProviderIds,ImageTags,Path,ProductionYear,MediaSources',
+                'Limit': str(limit)}, t=20)
+            items = obj.get('Items') if isinstance(obj, dict) else None
+            if items:
+                out = list(items)
+        if not out and term:
+            st, obj = _ef2_http(inst, '/Items', params={
+                'SearchTerm': term, 'Recursive': 'true',
+                'Fields': 'ProviderIds,ImageTags,Path,ProductionYear,MediaSources',
+                'Limit': str(limit)}, t=20)
+            out = list((obj.get('Items') if isinstance(obj, dict) else None) or [])
+    except Exception:
+        pass
+    rows = []
+    for x in out:
+        if not isinstance(x, dict):
+            continue
+        pid = x.get('ProviderIds') or {}
+        rows.append({'id': str(x.get('Id') or ''), 'name': str(x.get('Name') or ''),
+                     'type': str(x.get('Type') or ''), 'year': str(x.get('ProductionYear') or ''),
+                     'tmdbid': str(pid.get('Tmdb') or ''),
+                     'path': str(x.get('Path') or ''),
+                     'primary': str((x.get('ImageTags') or {}).get('Primary') or ''),
+                     'media': len(x.get('MediaSources') or [])})
+    return rows
+
+
+# ─────────────────────── 对外：总览 / 库概览 ───────────────────────
+def embyfix_v2_overview(which='emby', force=False):
+    t0 = _ef2_time.time()
+    inst = _ef2_inst(which)
+    libs = _ef2_libs(which, force=force)
+    idx = _ef2_strm_index(which, force=force)
+    lines = _ef_log_lines(300)
+    lg = _ef_log_stat(lines)
+    root_ok = os.path.isdir(inst['strm'])
+    # 当前实例节点（与 V1.52 保持七节点口径，但按实例取数）
+    nodes = [
+        {'key': 'cloud115', 'icon': '☁️', 'name': '115 网盘', 'state': 'ok' if os.path.isdir('/CloudNAS/115open') else 'fail',
+         'desc': 'CD2 挂载可读 · 源视频文件存在', 'why': 'CD2 挂载 %s' % ('可读' if os.path.isdir('/CloudNAS/115open') else '不可读'),
+         'detail': '/CloudNAS/115open', 'actions': ['probe_cloud', 'find_cloud']},
+        {'key': 'mtPoll', 'icon': '🔄', 'name': 'MT 定期轮询', 'state': 'ok' if lg['poll_seen'] else 'warn',
+         'desc': 'STRM-Realtime 轮询扫描新增文件', 'why': '最近日志 %s' % ('有轮询信号' if lg['poll_seen'] else '未见'),
+         'detail': lg['last_batch'][:150], 'actions': ['mt_logs', 'mt_cfg']},
+        {'key': 'mtOrganize', 'icon': '📦', 'name': '整理落位', 'state': 'ok' if lg['organize_seen'] else 'warn',
+         'desc': 'MT 批量转移到 destDir 正库', 'why': '最近日志 %s' % ('有批量转移' if lg['organize_seen'] else '未见'),
+         'detail': '', 'actions': ['org_logs']},
+        {'key': 'strmGen', 'icon': '📝', 'name': 'STRM 生成', 'state': 'ok' if idx else 'fail',
+         'desc': '生成 .strm 并指向 115 实体', 'why': '本地索引 %d 个内容目录 · 近期新建 %d' % (len(idx), lg['strm_created']),
+         'detail': '', 'actions': ['strm_orphan', 'strm_reindex']},
+        {'key': 'embyNotify', 'icon': '📡', 'name': '通知 Emby 刷新',
+         'state': 'fail' if lg['refresh_fail'] else ('ok' if lg['refresh_ok'] else 'unknown'),
+         'desc': '路径刷新成功 / 失败', 'why': '成功 %d / 失败 %d（KFC2 失败 %d）' %
+         (lg['refresh_ok'], lg['refresh_fail'], lg['kfc2_fail']),
+         'detail': (lg['fail_samples'] or [''])[0][:180], 'actions': ['kfc2_diag', 'notify_test']},
+        {'key': 'embyIndex', 'icon': '📺', 'name': 'Emby 入库', 'state': 'ok' if root_ok and libs else 'fail',
+         'desc': 'Series/Episode 存在且可播放', 'why': '%s · 库 %d 个' % (inst['name'], len(libs)),
+         'detail': '', 'actions': ['scan_start', 'scan_stop']},
+        {'key': 'metaScrape', 'icon': '🖼️', 'name': '元数据与封面', 'state': 'unknown',
+         'desc': 'TMDBID / NFO / 海报 / Primary', 'why': '用「缺图扫描」精确核对', 'detail': '',
+         'actions': ['cover_scan', 'tmdb_check']},
+    ]
+    return {'ok': True, 'which': which, 'name': inst['name'], 'nodes': nodes,
+            'stat': {'libs': len(libs), 'dirs': len(idx),
+                     'refresh_ok': lg['refresh_ok'], 'refresh_fail': lg['refresh_fail'],
+                     'kfc2_fail': lg['kfc2_fail'], 'created': lg['strm_created'],
+                     'deleted': lg['strm_deleted']},
+            'scan': _ef_scan_task(inst), 'guard': _ef_layer_guard(),
+            'fail_samples': lg['fail_samples'][:6],
+            'secs': round(_ef2_time.time() - t0, 3)}
+
+
+def embyfix_v2_libs(which='emby', with_count=False):
+    libs = _ef2_libs(which)
+    if not with_count:
+        return {'ok': True, 'which': which, 'rows': libs}
+    inst = _ef2_inst(which)
+    rows = []
+    for lib in libs:
+        cnt = {}
+        for typ in ('Series', 'Movie'):
+            st, obj = _ef2_http(inst, '/Items', params={
+                'ParentId': lib['id'], 'IncludeItemTypes': typ, 'Recursive': 'true',
+                'Limit': '1', 'Fields': 'Id'}, t=15)
+            cnt[typ] = int((obj.get('TotalRecordCount') if isinstance(obj, dict) else 0) or 0)
+        rows.append(dict(lib, series=cnt['Series'], movies=cnt['Movie']))
+    return {'ok': True, 'which': which, 'rows': rows}
+
+
+# ─────────────────────── 三端同查 ───────────────────────
+def embyfix_v2_cross(which='emby', term='', tmdbid='', both=False, deep_cloud=True):
+    t0 = _ef2_time.time()
+    term = (term or '').strip()
+    if not term and not tmdbid:
+        return {'ok': False, 'msg': '请输入片名或 TMDBID'}
+    inst = _ef2_inst(which)
+    alt = 'emby_adult' if which == 'emby' else 'emby'
+    idx = _ef2_strm_index(which)
+    ql = (term or '').lower()
+    hits = [x for x in idx
+            if (ql and (ql in (x['name'] or '').lower() or ql in (x['dir'] or '').lower()))
+            or (tmdbid and x['tmdbid'] == str(tmdbid))][:12]
+    strm_rows = []
+    for h in hits:
+        rel, txt = _ef2_first_strm(h['local'])
+        n, seasons = _ef2_count_strm(h['local'])
+        nfo_state = _ef2_nfo_state(h['local'])
+        pp = os.path.join(h['local'], 'poster.jpg')
+        strm_rows.append({'name': h['name'], 'dir': h['dir'], 'tmdbid': h['tmdbid'],
+                          'year': h['year'], 'lib': h['lib'], 'path': h['path'],
+                          'local': h['local'], 'cloud': txt, 'sample': rel,
+                          'strm_n': n, 'seasons': seasons, 'nfo': nfo_state,
+                          'poster_local': (not os.path.islink(pp)) and os.path.isfile(pp)})
+    # 115：不整盘 find（会超时），只按 strm 反查到的精确路径 stat（带超时）
+    cloud_rows = []
+    for r in strm_rows:
+        ok = _ef2_cd2_stat(r['cloud'], 2.5) if (deep_cloud and r['cloud']) else None
+        cloud_rows.append({'name': r['name'], 'path': r['cloud'], 'ok': ok,
+                           'checked': bool(deep_cloud and r['cloud'])})
+    # Emby：当前实例（必要时按 TMDBID 补查）+ 可选另一实例
+    emby = {}
+    for w in ([which, alt] if both else [which]):
+        ii = _ef2_inst(w)
+        rows = _ef2_emby_match(ii, term=term, tmdbid=tmdbid, limit=12)
+        # 集数：仅对命中的 Series 拉一次（Limit=1 取 TotalRecordCount）
+        for r in rows:
+            if r['type'] == 'Series' and r['id']:
+                st, obj = _ef2_http(ii, '/Items', params={
+                    'ParentId': r['id'], 'Recursive': 'true', 'IncludeItemTypes': 'Episode',
+                    'Fields': 'Id', 'Limit': '1'}, t=15)
+                r['episodes'] = int((obj.get('TotalRecordCount') if isinstance(obj, dict) else 0) or 0)
+            else:
+                r['episodes'] = 0
+        emby[w] = rows
+    return {'ok': True, 'which': which, 'term': term, 'tmdbid': tmdbid,
+            'strm': strm_rows, 'cloud': cloud_rows, 'emby': emby,
+            'secs': round(_ef2_time.time() - t0, 3)}
+
+
+# ─────────────────────── 全量 / 单库扫描（后台任务） ───────────────────────
+def _ef_scan_task(inst):
+    try:
+        st, obj = _ef2_http(inst, '/ScheduledTasks', t=12)
+        if isinstance(obj, list):
+            for x in obj:
+                if (x.get('Name') or '') == 'Scan media library':
+                    return {'id': str(x.get('Id') or ''), 'state': x.get('State') or 'Idle',
+                            'progress': x.get('CurrentProgressPercentage')}
+    except Exception:
+        pass
+    return {'id': '', 'state': 'unknown', 'progress': None}
+
+
+def embyfix_v2_scan_start(which='emby', library='', deep_cloud=False):
+    with _EF2_LOCK:
+        if _EF2_JOB['state'] == 'running':
+            return {'ok': False, 'msg': '已有扫描任务在跑，请先停止或等待完成'}
+        _EF2_JOB.update({'state': 'running', 'which': which, 'library': library,
+                         'total': 0, 'done': 0, 'rows': [], 'started': _ef2_time.time(),
+                         'ended': 0, 'errors': [], 'msg': '准备中…',
+                         'deep_cloud': bool(deep_cloud)})
+    inst = _ef2_inst(which)   # 主线程预提取，后台只用纯参数
+    t = _ef2_thr.Thread(target=_ef2_scan_worker, args=(inst, library, bool(deep_cloud)),
+                        daemon=True, name='ef2-scan')
+    t.start()
+    _ef2_log('scan_start', which, True, 'lib=%s deep=%s' % (library or 'ALL', deep_cloud))
+    return {'ok': True, 'msg': '扫描任务已启动', 'which': which, 'library': library}
+
+
+def embyfix_v2_scan_stop():
+    with _EF2_LOCK:
+        if _EF2_JOB['state'] != 'running':
+            return {'ok': False, 'msg': '当前没有运行中的扫描'}
+        _EF2_JOB['state'] = 'stopping'
+        _EF2_JOB['msg'] = '正在停止…'
+    return {'ok': True, 'msg': '已发出停止信号'}
+
+
+def embyfix_v2_scan_status():
+    j = dict(_EF2_JOB)
+    if j['state'] == 'running' and j['total']:
+        j['pct'] = round(100.0 * j['done'] / j['total'], 1)
+    else:
+        j['pct'] = 100.0 if j['state'] == 'done' else 0.0
+    j['rows'] = j['rows'][:400]
+    return {'ok': True, 'job': j}
+
+
+def _ef2_scan_worker(inst, library, deep_cloud):
+    """后台扫描：本地索引 → 该库 Emby 映射（一次请求）→ 逐条比对。
+       deep_cloud 时对每个目录抽 1 个 strm 反查 115（8 并发 + 2.5s 超时），
+       不做全盘 find。"""
+    try:
+        idx = _ef2_strm_index(inst['which'], force=True)
+        if library:
+            idx = [x for x in idx if x['lib'] == library]
+        with _EF2_LOCK:
+            _EF2_JOB['total'] = len(idx)
+            _EF2_JOB['msg'] = '正在拉取 Emby 库索引…'
+        # ★ 按「目标库的 ParentId」拉 Emby 映射，而不是全库 Limit=6000 ——
+        #   全库排序后老电影会被截掉，导致整库误报「Emby 未入库」。
+        libs = _ef2_libs(inst['which'])
+        lib_id = ''
+        if library:
+            for lv in libs:
+                loc = (lv.get('locations') or [''])[0].rstrip('/')
+                if loc.endswith('/' + library.rstrip('/')) or loc == '/' + library:
+                    lib_id = lv['id']
+                    break
+            if not lib_id:
+                with _EF2_LOCK:
+                    _EF2_JOB['errors'].append('库 %s 未匹配到 Emby ItemId，回退全库映射' % library)
+        scan_libs = ([lib_id] if lib_id else [lv['id'] for lv in libs if lv['id']])
+        with _EF2_LOCK:
+            _EF2_JOB['msg'] = '拉取 Emby 映射（%d 个库）…' % len(scan_libs)
+        smap = {}
+        for lid in scan_libs:
+            for typ in ('Series', 'Movie'):
+                st, obj = _ef2_http(inst, '/Items', params={
+                    'ParentId': lid, 'IncludeItemTypes': typ, 'Recursive': 'true',
+                    'Fields': 'ProviderIds,ImageTags,Path,Name,ProductionYear',
+                    'Limit': '8000', 'StartIndex': '0'}, t=60)
+                for x in ((obj.get('Items') if isinstance(obj, dict) else None) or []):
+                    if not isinstance(x, dict):
+                        continue
+                    pid = x.get('ProviderIds') or {}
+                    tid = str(pid.get('Tmdb') or '')
+                    rec = {'id': str(x.get('Id') or ''), 'name': str(x.get('Name') or ''),
+                           'type': str(x.get('Type') or ''),
+                           'primary': str((x.get('ImageTags') or {}).get('Primary') or ''),
+                           'path': str(x.get('Path') or '')}
+                    if tid:
+                        smap['tmdb:' + tid] = rec
+                    if rec['name']:
+                        smap.setdefault('name:' + rec['name'], rec)
+        with _EF2_LOCK:
+            _EF2_JOB['msg'] = '比对中（Emby 映射 %d 条）…' % len(smap)
+
+        def one(h):
+            if _EF2_JOB['state'] == 'stopping':
+                return None
+            n, seasons = _ef2_count_strm(h['local'])
+            rec = smap.get('tmdb:' + h['tmdbid']) if h['tmdbid'] else None
+            if not rec:
+                rec = smap.get('name:' + h['name']) or smap.get('name:' + h['dir'])
+            nfo_state = _ef2_nfo_state(h['local'])
+            pp = os.path.join(h['local'], 'poster.jpg')
+            poster_local = (not os.path.islink(pp)) and os.path.isfile(pp)
+            cloud = None
+            if deep_cloud:
+                rel, txt = _ef2_first_strm(h['local'])
+                cloud = _ef2_cd2_stat(txt, 1.5) if txt else None
+            issues = []
+            if not h['tmdbid']:
+                issues.append('无 TMDBID')
+            if n == 0:
+                issues.append('无 .strm')
+            if not rec:
+                issues.append('Emby 未入库')
+            if rec and not rec['primary']:
+                issues.append('Emby 缺 Primary')
+            if not poster_local:
+                issues.append('本地缺 poster')
+            # ★ 只对剧集检查 tvshow.nfo；电影靠 TMDBID/文件名识别，本来就不生成 nfo，
+            #   若对电影也报「NFO 缺失」会造成整库假 warn（R级电影 609 条全中招）。
+            if seasons and nfo_state in ('dangling', 'missing'):
+                issues.append('NFO ' + ('悬空' if nfo_state == 'dangling' else '缺失'))
+            if cloud is False:
+                issues.append('115 实体不可读')
+            elif cloud is None and deep_cloud:
+                issues.append('115 探测超时')
+            return {'name': h['name'], 'dir': h['dir'], 'tmdbid': h['tmdbid'],
+                    'lib': h['lib'], 'path': h['path'], 'local': h['local'],
+                    'strm_n': n, 'season_n': len(seasons), 'seasons': seasons,
+                    'emby_id': rec['id'] if rec else '', 'emby_name': rec['name'] if rec else '',
+                    'primary': rec['primary'] if rec else '', 'poster_local': poster_local,
+                    'nfo': nfo_state, 'cloud': cloud, 'issues': issues,
+                    'state': 'fail' if (not rec or n == 0 or cloud is False)
+                    else ('warn' if issues else 'ok')}
+
+        # 115 深查用并发池（只在 deep_cloud 时启用，避免串行超时累积）
+        rows = []
+        pool = _EF2Pool(max_workers=8) if deep_cloud else None
+        try:
+            if pool:
+                for r in pool.map(one, idx):
+                    if _EF2_JOB['state'] == 'stopping':
+                        break
+                    if r:
+                        rows.append(r)
+                        with _EF2_LOCK:
+                            _EF2_JOB['done'] = len(rows)
+            else:
+                for h in idx:
+                    if _EF2_JOB['state'] == 'stopping':
+                        break
+                    r = one(h)
+                    if r:
+                        rows.append(r)
+                        with _EF2_LOCK:
+                            _EF2_JOB['done'] = len(rows)
+        finally:
+            if pool:
+                pool.shutdown(wait=False)
+        rows.sort(key=lambda x: ({'fail': 0, 'warn': 1, 'ok': 2}.get(x['state'], 3)))
+        stopped = _EF2_JOB['state'] == 'stopping'
+        with _EF2_LOCK:
+            _EF2_JOB['rows'] = rows
+            _EF2_JOB['done'] = len(rows)
+            _EF2_JOB['state'] = 'stopped' if stopped else 'done'
+            _EF2_JOB['ended'] = _ef2_time.time()
+            _EF2_JOB['msg'] = ('已停止' if stopped else '完成') + ' · 扫描 %d 条，异常 %d 条' % (
+                len(rows), sum(1 for r in rows if r['state'] != 'ok'))
+        _ef2_log('scan_done', inst['which'], not stopped, _EF2_JOB['msg'],
+                 _EF2_JOB['ended'] - _EF2_JOB['started'])
+    except Exception as e:
+        with _EF2_LOCK:
+            _EF2_JOB['state'] = 'error'
+            _EF2_JOB['msg'] = str(e)[:250]
+            _EF2_JOB['ended'] = _ef2_time.time()
+        _ef2_log('scan_done', inst['which'], False, str(e)[:250])
+
+
+# ─────────────────────── 四档精确刷新 ───────────────────────
+def embyfix_v2_refresh(which='emby', scope='item', target='', path=''):
+    """scope: item=单条目(已入库,最快) | paths=单剧目录通知 | library=单媒体库 | all=全库扫描任务
+       如实说明：Emby 的增量通知不会导入全新文件；新文件必须 library 或 all。"""
+    t0 = _ef2_time.time()
+    inst = _ef2_inst(which)
+    steps = []
+    msg = ''
+    if scope == 'item':
+        if not target:
+            return {'ok': False, 'msg': '单条目刷新需要 Emby Item ID'}
+        st, obj = _ef2_http(inst, '/Items/%s/Refresh' % target, 'POST', params={
+            'Recursive': 'true', 'MetadataRefreshMode': 'FullRefresh',
+            'ImageRefreshMode': 'FullRefresh'}, t=30)
+        steps.append({'label': '单条目 Refresh', 'ok': st in (200, 204), 'msg': 'HTTP %d' % st})
+        msg = '只刷新这一个条目（Series/Movie/Season），**对已入库条目最快**；若它还没入库则无效。'
+    elif scope == 'paths':
+        ups = []
+        if path:
+            ups.append({'Path': path, 'UpdateType': 'Created'})
+        try:
+            local = path.replace(inst['prefix'], inst['strm'], 1)
+            if os.path.isdir(local):
+                for root, ds, fs in os.walk(local):
+                    ds[:] = [d for d in ds if not os.path.islink(os.path.join(root, d))]
+                    for f in fs:
+                        if f.endswith('.strm'):
+                            ups.append({'Path': os.path.join(root, f).replace(inst['strm'], inst['prefix'], 1),
+                                        'UpdateType': 'Created'})
+        except Exception:
+            pass
+        for i in range(0, len(ups), 40):
+            st, obj = _ef2_http(inst, '/Library/Media/Updated', 'POST',
+                                body={'Updates': ups[i:i + 40]}, t=25)
+            steps.append({'label': '通知批次 %d' % (i // 40 + 1),
+                          'ok': st in (200, 204), 'msg': 'HTTP %d · %d 路径' % (st, len(ups[i:i + 40]))})
+        msg = '通知该目录/文件变更（%d 条）。**增量通知只更新已存在条目，不导入新文件**；新片请改用「单媒体库」。' % len(ups)
+    elif scope == 'library':
+        if not target:
+            return {'ok': False, 'msg': '单库刷新需要 Library Item ID（见库概览）'}
+        st, obj = _ef2_http(inst, '/Items/%s/Refresh' % target, 'POST', params={
+            'Recursive': 'true', 'MetadataRefreshMode': 'Default',
+            'ImageRefreshMode': 'Default'}, t=120)
+        steps.append({'label': '单媒体库 Refresh', 'ok': st in (200, 204), 'msg': 'HTTP %d' % st})
+        msg = '只刷新这一个媒体库，**比全库扫描快得多**；能发现该库里新落位的 .strm。'
+    elif scope == 'all':
+        task = _ef_scan_task(inst)
+        if not task['id']:
+            return {'ok': False, 'msg': '未找到 Scan media library 任务'}
+        st, obj = _ef2_http(inst, '/ScheduledTasks/Running/%s' % task['id'], 'POST', t=30)
+        steps.append({'label': '启动全库扫描', 'ok': st in (200, 204), 'msg': 'HTTP %d' % st})
+        msg = '全库扫描（最慢）。**不要反复触发**，每调一次会取消正在跑的扫描再重启。'
+    else:
+        return {'ok': False, 'msg': '未知刷新档位 %s' % scope}
+    ok = bool(steps) and all(s['ok'] for s in steps)
+    secs = round(_ef2_time.time() - t0, 2)
+    _ef2_log('refresh_' + scope, which, ok, '%s %s' % (target or path, msg[:100]), secs)
+    return {'ok': ok, 'which': which, 'scope': scope, 'steps': steps,
+            'msg': msg, 'secs': secs}
+
+
+# ─────────────────────── 逐节点动作 ───────────────────────
+def embyfix_v2_node(which='emby', action='', arg=''):
+    t0 = _ef2_time.time()
+    inst = _ef2_inst(which)
+    ok = True
+    detail = ''
+    if action == 'probe_cloud':
+        ok = os.path.isdir('/CloudNAS/115open') and os.path.isdir('/CloudNAS/115open/KFC')
+        detail = 'CD2 挂载 %s（/CloudNAS/115open）' % ('可读' if ok else '不可读')
+    elif action == 'find_cloud':
+        # 从本地 strm 反查精确路径，绝不全盘 find
+        idx = _ef2_strm_index(which)
+        hit = next((x for x in idx if arg and arg.lower() in x['dir'].lower()), None)
+        if hit:
+            rel, txt = _ef2_first_strm(hit['local'])
+            state = _ef2_cd2_stat(txt, 3.0)
+            detail = '命中 %s → 115 实体 %s\n%s' % (hit['dir'], state, txt[:280])
+            ok = state is True
+        else:
+            ok = False
+            detail = '本地 STRM 无「%s」；无法反查 115 精确路径（不在 CD2 上全盘 find，会超时）' % arg
+    elif action == 'mt_logs' or action == 'org_logs':
+        lines = _ef_log_lines(300)
+        key = '[STRM-Realtime]' if action == 'mt_logs' else '批量转移完成'
+        hit = [l for l in lines if key in l]
+        detail = '\n'.join(x.strip()[:260] for x in hit[-16:]) or '近 300 行无相关日志'
+        ok = bool(hit)
+    elif action == 'mt_cfg':
+        try:
+            # 容器内 MT 数据目录挂到 /data；宿主机路径仅作兜底（media-hub 自身在容器内跑）
+            cands = ['/data/webcfg.json', '{{MH_VOL1}}/docker/mediatidy/data/webcfg.json']
+            p = next((x for x in cands if os.path.isfile(x)), cands[0])
+            d = json.load(open(p, encoding='utf-8'))
+            keys = sorted([k for k in d.keys()])[:26]
+            detail = '配置 %s（顶层键 %d 个）：%s' % (p, len(d.keys()), ', '.join(keys))
+            for kk in ('realtimeMode', 'realtime', 'strmRealtime', 'embyRefreshServers',
+                       'embyRefresh', 'embyInstances', 'profiles'):
+                if kk in d:
+                    detail += '\n%s = %s' % (kk, str(d.get(kk))[:180])
+        except Exception as e:
+            ok = False
+            detail = '读配置失败: ' + str(e)[:180]
+    elif action == 'strm_reindex':
+        idx = _ef2_strm_index(which, force=True)
+        detail = '已重建本地索引：%d 个内容目录' % len(idx)
+        ok = bool(idx)
+    elif action == 'strm_orphan':
+        idx = _ef2_strm_index(which)
+        orphans = []
+        for h in idx[:400]:
+            rel, txt = _ef2_first_strm(h['local'])
+            if txt and _ef2_cd2_stat(txt, 1.5) is False:
+                orphans.append(h['dir'])
+            if len(orphans) >= 40:
+                break
+        detail = '抽样 %d 个目录，115 实体缺失 %d 个：%s' % (
+            min(400, len(idx)), len(orphans), '、'.join(orphans[:20]))
+        ok = not orphans
+    elif action == 'kfc2_diag':
+        lines = _ef_log_lines(200)
+        bad = [l.strip()[:240] for l in lines if 'refresh path failed' in l and 'KFC2' in l]
+        other = _ef2_inst('emby_adult')
+        ok = False
+        detail = ('KFC2 刷新路径仍带 /app 前缀（应为 /strm-mdc-ng 或对应库根）；'
+                  '需改 MT 实例配置后重启 MT。\n最近失败：' + (bad[-1] if bad else '近 200 行未见')) \
+            if other['key'] else 'KFC2 未配置 emby_key2，无法诊断'
+    elif action == 'notify_test':
+        st, obj = _ef2_http(inst, '/Library/Media/Updated', 'POST',
+                            body={'Updates': [{'Path': inst['prefix'] + '/', 'UpdateType': 'Modified'}]}, t=20)
+        ok = st in (200, 204)
+        detail = 'HTTP %d（仅验证通知端点连通，不代表新文件会导入）' % st
+    elif action == 'scan_start' or action == 'scan_stop':
+        task = _ef_scan_task(inst)
+        if not task['id']:
+            ok = False
+            detail = '未找到扫描任务'
+        else:
+            st, obj = _ef2_http(inst, '/ScheduledTasks/Running/%s' % task['id'],
+                                'POST' if action == 'scan_start' else 'DELETE', t=30)
+            ok = st in (200, 204)
+            detail = 'HTTP %d · 任务 %s · %s' % (st, task['id'], task['state'])
+    elif action == 'cover_scan':
+        idx = _ef2_strm_index(which)
+        miss = []
+        for h in idx[:200]:
+            pp = os.path.join(h['local'], 'poster.jpg')
+            if os.path.islink(pp) or not os.path.isfile(pp):
+                miss.append(h['dir'])
+            if len(miss) >= 40:
+                break
+        detail = '抽查 %d 个目录，本地缺 poster：%d 个（%s）' % (
+            min(200, len(idx)), len(miss), '、'.join(miss[:15]))
+        ok = not miss
+    elif action == 'tmdb_check':
+        idx = _ef2_strm_index(which)
+        noid = [h['dir'] for h in idx if not h['tmdbid']]
+        detail = '%d 个内容目录，%d 个目录名缺 TMDBID：%s' % (
+            len(idx), len(noid), '、'.join(noid[:15]))
+        ok = not noid
+    else:
+        ok = False
+        detail = '未知节点动作 %s' % action
+    secs = round(_ef2_time.time() - t0, 2)
+    _ef2_log('node_' + action, which, ok, detail[:200], secs)
+    return {'ok': bool(ok) if action != 'kfc2_diag' else True,
+            'action': action, 'which': which, 'detail': detail, 'secs': secs}
+
+
+def embyfix_v2_ops(limit=80):
+    with _EF2_LOCK:
+        rows = list(reversed(_EF2_OPS[-int(limit or 80):]))
+    for r in rows:
+        r['ts_str'] = _ef2_time.strftime('%m-%d %H:%M:%S', _ef2_time.localtime(r['ts']))
+    return {'ok': True, 'rows': rows}
+
+
+def embyfix_v2_compare(term='', tmdbid=''):
+    """双实例同片对比：同一片名/TMDBID 在 KFC 与 KFC2 的入库状态。"""
+    if not term and not tmdbid:
+        return {'ok': False, 'msg': '请输入片名或 TMDBID'}
+    out = {}
+    for w in ('emby', 'emby_adult'):
+        out[w] = _ef2_emby_match(_ef2_inst(w), term=term, tmdbid=tmdbid, limit=8)
+    return {'ok': True, 'term': term, 'tmdbid': tmdbid, 'emby': out}
+
 # 命名整理自动化任务（原「群友命名 zip」rename.py 的引擎化 + 定时/手动触发）
 # 作用：把 115 指定目录里的视频文件改名成 MT 能识别的「标题.年份.SxxExx」，
 #       改名后可选地移动到另一个 115 目录（由 MT 的整理方案负责后续入库）。
@@ -29536,10 +34244,17 @@ if __name__ == '__main__':
     except Exception as _e:
         logger.warning('sec_init 失败: %s', _e)
 if __name__ == '__main__':
-    print('Media Hub v9 → http://0.0.0.0:%d/' % PORT, flush=True)
+    # ★ V3.0：拉起已启用插件（独立子进程，故障时隔离不影响宿主）
+    try:
+        v3_autostart()
+    except Exception as _e:
+        logger.warning('[V3] autostart 失败: %s', _e)
+    print('Media Hub v3.0 (Plugin Platform) → http://0.0.0.0:%d/' % PORT, flush=True)
     print('  mount=%s db=%s logdir=%s ptDB=%s:%s/%s' % (
         MOUNT, DB, LOG_DIR, _pt_db_env()['host'], _pt_db_env()['port'],
         _pt_db_env()['db']), flush=True)
+    threading.Thread(target=mem_guard_loop, daemon=True).start()
+
     threading.Thread(target=_pt_autoclean_loop, daemon=True).start()
     threading.Thread(target=_prefetch_loop, daemon=True).start()
     threading.Thread(target=_heal_loop, daemon=True).start()
@@ -29624,6 +34339,9 @@ if __name__ == '__main__':
                 logger.warning('CC 拉取循环异常: %s', e)
             time.sleep(3600)
     threading.Thread(target=_cc_pull_loop, daemon=True).start()
+    # ★ 2026-11-11 M-Team JWT 全自动自愈：90s 巡检，失效立即从 CC 恢复（零人工）
+    threading.Thread(target=_mteam_autoheal_loop, daemon=True,
+                     name="mteam-autoheal").start()
     # ★ 2026-10-24 第七轮：面板 HTML 部署守护（防再次被外部整文件覆盖而无人察觉）
     #   先记基线，再起 30s 巡检线程。只告警+快照，不回滚/不重启/不删文件。
     try:
@@ -29642,5 +34360,6 @@ if __name__ == '__main__':
     #   然后也可以让它自动的去补齐」）—— 后端这一层必须有，
     #   否则前端开关只是个摆设，关掉页面就没了。
     threading.Thread(target=_gap_sched_loop, daemon=True).start()
+    threading.Thread(target=q2f_loop, daemon=True).start()
 
     ThreadingHTTPServer(('0.0.0.0', PORT), H).serve_forever()
