@@ -1,5 +1,34 @@
 # Changelog
 
+## [4.0.0-rc2] - 2026-11-15 · 馒头实时数值通道修复 + 面板主脚本语法事故修复
+
+> 线上事故修复的发布副本对齐版本：**零功能新增、零凭据变更**。起因是实机反馈「馒头上传好像才 19」，据此开浏览器复核，推翻上一轮「9/9 全绿」口径——`9/9` 只代表 Bot 保号动作计数，**不代表站点数值刷新成功**。
+
+### Fixed（前端 · 主脚本语法事故）
+- `index.html` 主 `<script>` 中 `manFoldersOne(''+esc(d)+'',this.checked)` 引号拼接错误，`node --check` 报 `SyntaxError: Unexpected string`，导致整块脚本不执行：面板 `switchTab undefined`、`viewHTML=0`、页面停在「检测中…」、PT 保号页打不开。
+- 修复为 `manFoldersOne(\''+esc(d)+'\',this.checked)`；四个 `<script>` 块全部 `node --check` 通过。线上按红区铁律保 inode 回写，浏览器实机恢复 1739 行完整视图；发布副本同样缺陷已同步修复。
+
+### Fixed（后端 · 馒头实时数值）
+- **新增 `_mt_live_api()`**：用 secrets 中已验证的 JWT + 设备指纹，按官方 HMAC-SHA1 签名直连 `/api/member/profile`，绕开失效的 MoviePilot `userdata` 通道（MP 该站绑定旧账号缓存、`POST` 重抓恒失败、45s 超时）。结果写入 `_KA_LIVE['m-team.cc']`。
+- **新增 `_mt_live_refresh()`**：读取前 300s 自动保鲜、失败 120s 退避，保留旧缓存不闪断；由 `keepalive_sites()` 开头调用。
+- `_ka_live_probe()` 对 `m-team.cc` 分流到官方直连通道。
+- **考核文字与卡片同源**：`keepalive_sites()` 对 `mteam` 用实时 row 覆盖 bot 旧快照，消除「卡片 19.49G / 考核 7.8G」两套数字；Bot `state.json` 原始 stats **不伪造落盘**。
+
+### Security / 发布纪律
+- 发布副本注释脱敏（不写具体站点 uid），无新增硬编码凭据；部署时 diff 找回并合并并行会话的 25B 隐私规避改动（`api_key` 变量拼接），避免覆盖他人工作。
+- 红区流程：拉真源 → 唯一锚点增量补丁 → `py_compile` / `node --check` → 保 inode 回传 → `docker restart` → 真机实测。
+
+### 实测（2026-11-15 12:35）
+| 项 | 结果 |
+|---|---|
+| `/api/mteam/status` | `state=valid`，信标 `code=0 保号信标成功`，看门狗在线 |
+| `/api/ka/sites` | 9/9；馒头 `live_ok=true`、`live_err=''`、上传 `20924783382 B = 19.49 GiB`、魔力 `298.9` |
+| 浏览器 PT 保号页 | `19.49 GB` / 魔力 `299` / `✅ 正常` / `🛰 实时 35 秒前` |
+
+### 已知限制（非本版缺陷）
+- 「上传才 19」不涨的根因是 NAS `/vol1` 100% 满（可用 2.9G < Bot 60G 加种阈值），Bot 暂停加种、`seed_ids=0`；需清理 `mediatidy.db.bak*` 才能恢复辅种。清理属永久改动，**待用户授权**。
+- `tools/mteam_form_login.py` 尚未接入看门狗 L3 兜底，需用户点头后改现有代码。
+
 ## [4.0.0-rc1] - 2026-11-15 · v4 重制：商业级媒体运维总控台（保留全部既有功能 + 新增总控能力）
 
 > 重大重制：在**完整保留线上既有全部功能**（PT / MT(馒头) / Emby / Edge 静默重登 / 60s 巡检 / Bot 推送 等所有后端链路与 5678 旧面板零改动）的前提下，新增一套商业级运维控制平面。旧面板仍运行于 `/`，新面板挂载于 `/v4`（同一端口 5678，端口统一待后续迁 45678）。

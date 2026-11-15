@@ -34255,7 +34255,7 @@ function manFoldersRender(){
   const c=document.getElementById('manf_count'); if(c)c.textContent='显示 '+dirs.length+' / '+MANF.dirs.length+' 个文件夹';
   el.innerHTML=dirs.length?dirs.map(d=>{
     const m=MANF.map[d];
-    return '<tr><td><input type="checkbox" class="nd-chk manfck" value="'+esc(d)+'" '+(MANF.sel.has(d)?'checked':'')+' onchange="manFoldersOne(''+esc(d)+'',this.checked)"></td>'
+    return '<tr><td><input type="checkbox" class="nd-chk manfck" value="'+esc(d)+'" '+(MANF.sel.has(d)?'checked':'')+' onchange="manFoldersOne(\''+esc(d)+'\',this.checked)"></td>'
       +'<td><div style="max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(d)+'">📁 '+esc(d)+'</div></td>'
       +'<td>'+m.count+'</td><td>'+ndSize(m.size)+'</td>'
       +'<td><span class="nd-pill off">未入队</span></td></tr>';

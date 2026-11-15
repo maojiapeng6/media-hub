@@ -13878,11 +13878,96 @@ def _ka_err_hint(msg):
     return '未识别的错误。解决：到「PT 保号」页查看该站任务详情，或稍后重试同步。'
 
 
+def _mt_live_api(timeout=20):
+    """★ 2026-11-15 馒头实时数值直连（绕开失效的 MP userdata 通道）。
+
+    M-Team 新版 SPA 只认 Authorization: JWT，MP 的 POST /site/userdata 抓不到
+    用户信息，且 MP 里该站可能绑着旧账号，与当前 JWT 对应账号不一致，面板
+    只能回退到 bot 的旧快照。这里改用 secrets 中已验证有效
+    的 JWT + 设备指纹直连官方 /api/member/profile，写回 _KA_LIVE。
+    """
+    t0 = time.time()
+    try:
+        sec = _ck_read_secrets()
+        m = (sec.get('sites') or {}).get('mteam') or {}
+        jwt = str(m.get('jwt') or '')
+        did = str(m.get('did') or '')
+        vid = str(m.get('visitorid') or '')
+        if not jwt.startswith('eyJ'):
+            raise RuntimeError('secrets 里没有有效 JWT')
+        import hashlib as _hl, hmac as _hm, base64 as _b64
+        ts = int(time.time() * 1000)
+        sgn = _b64.b64encode(_hm.new(
+            b'HLkPcWmycL57mfJt',
+            ('POST&/api/member/profile&%s' % ts).encode(), _hl.sha1).digest()).decode()
+        fp = _hl.sha256(jwt.encode()).hexdigest()
+        hdr = {'Content-Type': 'application/json; charset=UTF-8',
+               'Accept': 'application/json, text/plain, */*',
+               'Authorization': jwt,
+               'Origin': 'https://kp.m-team.cc',
+               'Referer': 'https://kp.m-team.cc/index',
+               'Ts': str(ts // 1000), 'ts': str(ts // 1000),
+               'webversion': '2000', 'webVersion': '2000', 'version': '2.0.0',
+               'Did': did or fp[:32], 'did': did or fp[:32],
+               'visitorid': vid or fp[32:], 'visitorId': vid or fp[32:],
+               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36'}
+        body = json.dumps({'_timestamp': str(ts), '_sgin': sgn}).encode()
+        req = urllib.request.Request('https://api.m-team.cc/api/member/profile',
+                                     data=body, headers=hdr, method='POST')
+        # 保号固定直连（代理出口会被 CF 挑战）
+        op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with op.open(req, timeout=timeout) as resp:
+            j = json.loads(resp.read().decode('utf-8', 'ignore'))
+        if str(j.get('code')) != '0':
+            raise RuntimeError('站点返回 code=%s %s' % (j.get('code'), j.get('message')))
+        d = j.get('data') or {}
+        mc = d.get('memberCount') or {}
+        row = {'username': d.get('username') or '',
+               'userid': d.get('id') or mc.get('id') or '',
+               'upload': float(mc.get('uploaded') or 0),
+               'download': float(mc.get('downloaded') or 0),
+               'ratio': float(mc.get('shareRate') or 0),
+               'bonus': float(mc.get('bonus') or 0),
+               'join_at': str(mc.get('createdDate') or '')[:10],
+               'last_modified': mc.get('lastModifiedDate') or ''}
+        try:
+            uid = int(row['userid'] or 0)
+        except Exception:
+            uid = 0
+        r = {'ok': True, 'msg': '', 'row': row, 'uid': uid,
+             'ts': time.time(), 'ms': int((time.time() - t0) * 1000), 'fix': ''}
+    except Exception as e:
+        r = {'ok': False, 'msg': '馒头直连取数失败：%s' % str(e)[:90], 'row': {},
+             'uid': 0, 'ts': time.time(), 'ms': int((time.time() - t0) * 1000), 'fix': ''}
+    with _KA_LIVE_LOCK:
+        _KA_LIVE['m-team.cc'] = r
+        _ka_live_save()
+    return r
+
+
+_MT_LIVE_TRY_TS = [0.0]
+
+
+def _mt_live_refresh(max_age=300, retry=120):
+    """保号页读取前自动保鲜；失败时保留旧缓存且 retry 秒内不重复打站点。"""
+    lv = _KA_LIVE.get('m-team.cc') or {}
+    age = time.time() - float(lv.get('ts') or 0)
+    if lv.get('ok') and age < max_age:
+        return lv
+    if not lv.get('ok') and time.time() - _MT_LIVE_TRY_TS[0] < retry:
+        return lv
+    _MT_LIVE_TRY_TS[0] = time.time()
+    return _mt_live_api()
+
+
 def _ka_live_probe(dom, mp_id=None, timeout=40):
     """真实时探测单站：POST /api/v1/site/userdata/{id} → MP 当场重抓站点 HTML。
     返回 {'ok','msg','row','uid','ts','ms','fix'} 并写入 _KA_LIVE（含落盘）。"""
     t0 = time.time()
     dom = _norm_domain(dom) or str(dom or '')
+    # 2026-11-15: 馒头 SPA 走官方 API 直连，MP userdata 抓不到用户信息
+    if dom == 'm-team.cc':
+        return _mt_live_api(timeout=min(timeout, 20))
     if not mp_id:
         mp_id = (_ka_mp_sites().get(dom) or {}).get('id')
     if not mp_id:
@@ -14277,6 +14362,11 @@ def ka_live_one(sid=None, dom=None):
 
 def keepalive_sites():
     """PT 保号中心数据：每站规则 + 任务进度 + 状态 + 启停开关（口径与 Bot 一致）"""
+    # 2026-11-15: 馒头实时数值自动保鲜（不依赖 MP）
+    try:
+        _mt_live_refresh()
+    except Exception:
+        pass
     st = _ka_read_state()
     cfg = st.get('_cfg') or []
     now = time.time()
@@ -14286,6 +14376,27 @@ def keepalive_sites():
         ss = (st.get('sites') or {}).get(sid) or {}
         req = s.get('req') or {}
         stats = ss.get('stats') or {}
+        # 2026-11-15: 馒头考核文字与卡片同源——用官方 API 实时值覆盖 bot 旧快照，
+        # 避免出现「卡片 19.49G / 考核 7.8G」两套数字；失败时保持原值。
+        if sid == 'mteam':
+            try:
+                _mr = ((_KA_LIVE.get('m-team.cc') or {}).get('row') or {})
+                _mu = float(_mr.get('upload') or 0)
+                if _mu > 0:
+                    _ns = dict(stats)
+                    _ns['upload'] = _mu
+                    _ns['download'] = float(_mr.get('download') or 0)
+                    _ns['ratio'] = float(_mr.get('ratio') or 0)
+                    _ns['bonus'] = float(_mr.get('bonus') or 0)
+                    if _mr.get('userid'):
+                        _ns['uid'] = _mr.get('userid')
+                    if _mr.get('join_at'):
+                        _ns['joined'] = _mr.get('join_at')
+                    stats = _ns
+                    ss = dict(ss)
+                    ss['stats'] = _ns
+            except Exception:
+                pass
         tasks = _ka_tasks(req, ss, now, sid)
         bad = [t for t in tasks if t['status'] == 'bad']
         warn = [t for t in tasks if t['status'] == 'warn']
