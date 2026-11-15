@@ -1,5 +1,66 @@
 # Changelog
 
+## [4.0.1] - 2026-11-15 · 修仙 Bot v2.0.5：/start 崩溃、注册分层、播放时长/余额统一、AI 增强
+
+> 本版只动 **kfcgame（KFCGAME_bot 修仙机器人）** 的 7 个源码文件；线上容器已 `docker compose up -d --build` 重建并实机自检 **29/29 全绿**。
+> **LLM 的 API / 模型 / 凭据零变更**，仅增强推理与上下文。历史归档包 `kfcgame-v2.0.4*` **原样保留**，新增 `kfcgame-v2.0.5*`，不覆盖任何旧版本。
+
+### 一、用户反馈 → 真因（全部实机定位，未凭猜测）
+
+| 反馈 | 真因 | 证据 |
+|---|---|---|
+| 「输入这个命令没反应」（群里连发两次 `/start@KFCGAME_bot`） | `modules/game.py` 群聊 `/start` 分支写了 `parse_mode=PM`，但**该模块从未定义 `PM`** → `NameError` → handler 中断静默无响应；私聊分支不受影响 | 线上日志逐条 `🎯 /start 触发(群→短提示)` 紧跟 `NameError: name 'PM' is not defined`，时间与截图 15:53/15:58 完全对应 |
+| 「没有灵根真的不能修仙吗」/ 注册要绑 EMBY | 群里 `/start` 崩了 → 拿不到创建角色入口 → 群友以为要先绑 EMBY；实际闸门早已默认放行，但旧 docstring 仍写「所有命令必须绑定」，口径混乱 | `bind.py` 文件头 2026-10-12 需求与 `_DENY_UNBOUND` 实现相反 |
+| 「播放时长两个机器人不一样、根本不准确」 | `rank.item_stats/user_stats` 用 SQLite `datetime('now','-N day')`（**UTC**），而 `PlaybackActivity.DateCreated` 存的是**北京时间字符串** → 窗口错位 8 小时，与 `watch_iv` 结算、EmbyBoss 观影榜各报一套数 | 修复后逐用户对比：30 人 / 120099 秒 / **差异 0** |
+| 「余额不同命令不一样，应该都是无限，有的显示 900 多灵石」 | 两套货币（灵石 `kfc_cultivator.ls` / V积分 `embyboss.emby.iv`）+ owner `is_unlimited` 恒 ∞，但**打坐/闭关/兑换结果/AI 上下文**直接打印原始数值（实测 owner 灵石 1024） | `fmt_balance` 早已存在却未被所有展示点调用 |
+| 「AI 别那么傻，还是用 LLM 那个 API」 | 只留 3 轮上下文 / 最多 1 次工具调用；自定义 `system_prompt` 会**整体替换**掉全部知识库 → 规则、术语、隐私红线全丢；实时上下文缺时间/身份/真值 | `ai.py` 常量与 `build_system_prompt` |
+
+### 二、Fixed（7 个文件 / 21 处唯一锚点增量补丁）
+
+- **`modules/game.py`**：删除未定义的 `parse_mode=PM`（client 已默认 MARKDOWN）；打坐「当前身家」、闭关「当前灵石」改走 `db.fmt_balance`。
+- **`modules/bind.py`**：文件头重写为**三层权限定案**（公开层 / 隐私层 / 兑换链路），`_DENY_UNBOUND` 注释明确「游戏命令永远不得加入」；逻辑不变、只修文档与口径。
+- **`modules/rank.py`**：新增 `window_between(since, until)` / `window_cond(days)` 作为**播放统计唯一时间窗口**（epoch +8h → `unixepoch`，北京时间）；`item_stats`、`user_stats` 全部改用它，并用 `COALESCE(PlayDuration,0) - COALESCE(PauseDuration,0)` 消除「有次数但时长 0」；`/myview` 增加「今日观看」一行（与 `/my` 调同一个 `_settle_stats`），时长改为「X 小时（Y 分钟）」并标注「北京时间」。
+- **`modules/watch_iv.py`**：删除自己的一份时区换算，改为 `from .rank import window_between, _DUR` —— **两套实现合并为一套**，杜绝再次漂移。
+- **`modules/redeem.py`**：5 处「灵石不足 / 剩 / 现有」余额展示统一 `db.fmt_balance`；`_duihuan_text` 无限额度判定改用 `db.is_unlimited`。
+- **`ui.py`**：`/start` 双面板新增「修仙无需绑定 EMBY，人人可创建角色」与「隐私数据才需绑定」说明。
+- **`modules/ai.py`**：上下文 `3→8` 轮、工具 `1→2` 轮；新增 `_SMART_RULES`（先判意图 / 数值必须取真值 / owner 恒 ∞ / 今日与近 30 天口径要说清 / 修仙免绑定 / 如实身份）；自定义 `system_prompt` 由「替换」改为「追加」；`_COMMUNITY_KW` 补余额/时长/注册/无限等词；`_live_context` 注入当前北京时间与身份，Emby 与修仙余额统一走 `fmt_balance`。
+
+### 三、Changed（权限分层 · 用户本轮拍板）
+
+```
+公开层（人人可用，禁止任何绑定门槛）
+  /start /choose /name /me /sign /cultivate /breakthrough /tasks /ach /shop
+  /wallet /my /duihuan /exchange / 榜单 / 灵石 / V积分
+        ↓ 玩游戏攒灵石 → 换 V积分 → 兑换阁换码
+        ↓ 用码注册 EMBY → 绑定
+隐私层（必须绑定 EMBY）
+  服务器线路 / 登录地址 / 播放节点、媒体库、观看历史与时长、求片与下载进度、
+  账号管理（开号/续期/重置/删除/绑115）、赠送派送、管理员与基建命令
+```
+实现上 `bind_gate` 只拦 `_DENY_UNBOUND` 集合，其余一律放行；实测 12 个游戏命令全部免绑定，5 类隐私/资产/基建命令仍需绑定。
+
+### 四、实测（容器内 29 项断言，全部 PASS）
+
+- 群聊 `/start@KFCGAME_bot` **不再抛异常**、返回修仙按钮与分层文案；私聊双面板正常；`game.py` 代码里已无 `parse_mode=PM`。
+- owner `ls=1024 / vp=11` → `/me`、`/shop`、`/duihuan`、兑换阁、AI 上下文**全部显示 `∞ 无限`**。
+- `rank.window_cond(1)` 与 `watch_iv` 窗口**逐字符同源**；今日观看 22 条、近 1 天用户榜 30 人可查。
+- 与 EmbyBoss 观影榜同窗口对比：`KFCGAME_USERS 30 / EMBYBOSS_USERS 30 / COMMON 30 / 秒数差异 0 / 总时长 120099 秒`，两处完全相同；两 Bot 实为**同一个 Emby 实例**，且 `uplays=False`（观影榜不再自动加积分，无重复计分）。
+- AI：回答准则注入、知识库保留、自定义 prompt 追加不替换、8 轮 / 2 轮、意图词覆盖、`∞` 与时间注入全部通过。
+- 容器重建后启动日志干净（无 Traceback / NameError / ImportError）。
+
+### 五、部署与版本
+
+- 红区流程：拉线上真源 → 21 处锚点断言唯一命中 → `py_compile` 逐个通过 → 备份 `*.bak.20261116_v205` → `cat > dst` **保 inode** 回写 → 7 个文件 md5 与本地逐一比对一致 → 重建镜像 → 实测。
+- `kfcgame` 的 `app/` 打进镜像（非挂载），故用 `docker compose up -d --build` 重新构建；compose 未改 env。
+- 归档：`_releases/kfcgame-v2.0.5.tar.gz`（脱敏公开版）与 `kfcgame-v2.0.5-personal.tar.gz`（本地完整版），**v2.0.4 两个旧包保持不动**。
+
+### 六、已知边界 / 未改动
+
+- `openrepo/bots/kfcgame/` 是 **11-05 的零凭据参考实现**（无 `ai.py`、`db.py` 无 `fmt_balance`）。实测完整线上源码含 18 处真实凭据（qB 口令 / 内网 IP / QQ 邮箱 / 私人域名），`privacy_scan blocking=18`，**按隐私红线不做整目录同步**；本次修复以「运行实例 + 本地归档包 + 本 CHANGELOG」为准，参考实现保持原状以免制造依赖不一致。
+- EmbyBoss 观影榜仍不排除 `UserList` 且不处理 NULL 字段；实测在当前数据下与 kfcgame **零差异**，故未改动另一个容器。若日后出现差异，统一入口在 `rank.window_between`。
+- 「今日观看」是北京时间自然日 00:00→现在，「近 30 天」是滚动 30 天，二者本就不是同一个数；现在文案与 AI 规则均已明确标注口径，不再被误读成"数据不一致"。
+- 日志里偶发 `MessageNotModified` / `MessageDeleteForbidden` 是 Telegram 幂等/权限类无害告警，本版未改动（不影响上述功能）。
+
 ## [4.0.0-rc2] - 2026-11-15 · 馒头实时数值通道修复 + 面板主脚本语法事故修复
 
 > 线上事故修复的发布副本对齐版本：**零功能新增、零凭据变更**。起因是实机反馈「馒头上传好像才 19」，据此开浏览器复核，推翻上一轮「9/9 全绿」口径——`9/9` 只代表 Bot 保号动作计数，**不代表站点数值刷新成功**。
