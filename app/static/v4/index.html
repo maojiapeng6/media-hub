@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="obsidian" data-accent="orange" data-bright="mid" data-motion="full" data-radius="mid" data-typescale="mid" data-noise="0" data-scanline="0" data-glass="1">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<title>KFC 媒体中枢 · Media Ops Center</title>
+<!-- FOUC 预防：内联先于 CSS 注入 data-theme（避免白闪/布局跳动） -->
+<script>
+(function(){try{var p=JSON.parse(localStorage.getItem('v4_pref')||'{}');var t=p.theme||'obsidian';var a=p.accent||'orange';
+var d=document.documentElement;d.setAttribute('data-theme',t);d.setAttribute('data-accent',a);
+d.setAttribute('data-bright',p.bright||'mid');d.setAttribute('data-motion',p.motion==='reduced'?'reduced':'full');
+d.setAttribute('data-radius',p.radius||'mid');d.setAttribute('data-typescale',p.typescale||'mid');
+d.setAttribute('data-noise',p.noise?'1':'0');d.setAttribute('data-scanline',p.scanline?'1':'0');
+if(p.density==='compact')d.style.setProperty('--density','.85');else if(p.density==='spacious')d.style.setProperty('--density','1.15');}catch(e){}})();
+</script>
+<link rel="stylesheet" href="/static/v4/tokens.css"/>
+<link rel="stylesheet" href="/static/v4/themes.css"/>
+<link rel="stylesheet" href="/static/v4/shell.css"/>
+</head>
+<body>
+<div id="app" class="app">
+  <!-- 侧栏 -->
+  <aside id="sidebar" class="sidebar glass" aria-label="主导航"></aside>
+
+  <!-- 顶栏（MUST-KEEP 全局工具条） -->
+  <header class="topbar glass hairline-b">
+    <button id="btn-menu" class="tb-btn" title="菜单" aria-label="菜单">☰</button>
+    <div class="brand">
+      <div class="brand-t">KFC 媒体中枢</div>
+      <div class="brand-s">Media Ops Center · PT·MT·Emby 一站式</div>
+    </div>
+    <span id="crumb" class="crumb"></span>
+    <span id="health-badge" class="ghealth ok" role="status" aria-live="polite">检测中…</span>
+    <div class="tb-spacer"></div>
+    <span id="global-clock" class="tb-clock mono">------:--:--</span>
+    <button id="btn-search" class="tb-btn" title="搜索 / 命令面板 (Ctrl K)">🔍 <kbd>Ctrl K</kbd></button>
+    <span class="tb-sep"></span>
+    <button id="btn-refresh" class="tb-btn" title="刷新">↻ 刷新</button>
+    <button id="btn-log" class="tb-btn" title="活动日志">📜</button>
+    <button id="btn-appearance" class="tb-btn" title="外观（明暗+主题）">🎨</button>
+    <button id="btn-wallboard" class="tb-btn" title="挂墙大屏模式">🖥</button>
+  </header>
+
+  <!-- 主区 -->
+  <main id="main" class="main">
+    <div class="page-head"><h2 id="pagetitle"></h2></div>
+    <div id="page" class="page"></div>
+  </main>
+
+  <!-- 操作结果面板（可收起底部抽屉，MUST-KEEP） -->
+  <section id="opresult" class="opresult collapsed glass hairline-t">
+    <header class="op-h">
+      <span>📋 操作结果 <b id="opcount" class="mono">0</b></span>
+      <span class="op-tools">
+        <button id="btn-clear" class="btn sm">清空</button>
+        <button id="opcollapse" class="btn sm" onclick="document.getElementById('opresult').classList.toggle('collapsed')">收起</button>
+      </span>
+    </header>
+    <div id="oprows" class="op-rows"><div class="op-empty">暂无结果</div></div>
+  </section>
+</div>
+
+<!-- 命令面板 -->
+<div id="palette" class="palette" role="dialog" aria-modal="true">
+  <div class="pal-box glass">
+    <input id="pal-cmd" class="pal-cmd" placeholder="搜索日志 / 跳转模块 / 切换主题 / 保存布局…"/>
+    <div id="pal-results" class="pal-results"></div>
+  </div>
+</div>
+
+<!-- Toast 容器 -->
+<div id="toasts" class="toasts" aria-live="polite"></div>
+
+<script src="/static/v4/app.js"></script>
+</body>
+</html>

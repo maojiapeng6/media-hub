@@ -28365,6 +28365,11 @@ class H(BaseHTTPRequestHandler):
             return self._j(v3_sdk_route_get(p, q1, dict(self.headers)))
         if p.startswith('/api/v3/'):
             return self._j(v3_route_get(p, q1))
+        # ★ v4 重制：新增只读状态/健康/审计/配置/外观接口 + 静态资源（不改动任何现有链路）
+        if p == '/v4' or p == '/v4/' or p.startswith('/static/v4/'):
+            return v4_route(self, p)
+        if p == '/api/healthz' or p == '/api/v4/manifest' or p.startswith('/api/status') or p.startswith('/api/jwt') or p.startswith('/api/freshness') or p.startswith('/api/audit') or p.startswith('/api/config/export') or p.startswith('/api/diagnose/legacy') or p.startswith('/api/layout') or p.startswith('/api/theme'):
+            return self._j(v4_api(self, p, q1))
         # ★ v6 Emby 图片代理：/embyimg/<which>/<itemid>/<imgtype>?w=300&t=<tag>
         #   前端不接触 API Key，商用安全；走后端转发并缓存（1 天）。
         if p.startswith('/embyimg/'):
@@ -34294,6 +34299,113 @@ def naming_post(p, b):
         return r
     return {'ok': False, 'msg': 'unknown'}
 
+
+
+# ================= v4 重制：只读接口 + 静态资源（不改动任何现有 /api/* 链路） =================
+import time as _t, json as _json
+_V4_APP_DIR = os.path.dirname(os.path.abspath(__file__))
+_V4_STATIC = os.path.normpath(os.path.join(_V4_APP_DIR, 'static', 'v4'))
+_V4_DATA_DIRS = ['/dockroot/media-hub', _V4_APP_DIR]
+def _v4_data_path(name):
+    for d in _V4_DATA_DIRS:
+        try:
+            if os.path.isdir(d): return os.path.join(d, name)
+        except Exception: pass
+    return os.path.join(_V4_APP_DIR, name)
+def v4_route(handler, p):
+    if p in ('/v4', '/v4/'): p = '/v4/index.html'
+    # /v4/* 与 /static/v4/* 都映射到磁盘 static/v4/*
+    if p.startswith('/v4/'):
+        rel = 'v4' + p[3:]
+    elif p.startswith('/static/v4/'):
+        rel = p[len('/static/'):]
+    else:
+        rel = p.lstrip('/')
+    fp = os.path.normpath(os.path.join(_V4_APP_DIR, 'static', rel))
+    if not fp.startswith(_V4_STATIC): return handler._s(403, b'forbidden', 'text/plain')
+    if not os.path.isfile(fp): return handler._s(404, b'not found', 'text/plain')
+    ext = os.path.splitext(fp)[1].lower().lstrip('.')
+    ct = {'css':'text/css','js':'application/javascript','html':'text/html','htm':'text/html','json':'application/json','svg':'image/svg+xml','png':'image/png','jpg':'image/jpeg','jpeg':'image/jpeg','ico':'image/x-icon','webp':'image/webp','woff2':'font/woff2'}.get(ext, 'application/octet-stream')
+    try:
+        with open(fp, 'rb') as f: data = f.read()
+    except Exception: return handler._s(500, b'err', 'text/plain')
+    handler.send_response(200); handler.send_header('Content-Type', ct); handler.send_header('Content-Length', str(len(data))); handler.send_header('Cache-Control', 'no-cache'); handler.end_headers()
+    if not getattr(handler, '_head_only', False): handler.wfile.write(data)
+def v4_api(handler, p, q1):
+    now = int(_t.time())
+    try:
+        if p == '/api/healthz': return {'ok':True,'status':'ok','ts':now,'version':globals().get('VERSION','4.0.0-rc1')}
+        if p == '/api/v4/manifest': return {'ok':True,'themes':['obsidian','liquid-glass','light-studio','terminal','editorial','neon-ops'],'accents':['orange','blue','cyan','purple','green','rose'],'version':'4.0.0-rc1'}
+        if p.startswith('/api/status/health'): return v4_health()
+        if p.startswith('/api/jwt/state'): return v4_jwt_state()
+        if p.startswith('/api/freshness'): return {'ok':True,'now':now,'threshold':120}
+        if p.startswith('/api/audit'): return {'ok':True,'rows':[]}
+        if p.startswith('/api/config/export'): return {'ok':True,'config':v4_config_export()}
+        if p.startswith('/api/diagnose/legacy'): return v4_legacy_ports()
+        if p.startswith('/api/layout'):
+            try: return {'ok':True,'layout':_json.load(open(_v4_data_path('v4_layout.json')))}
+            except Exception: return {'ok':True,'layout':None}
+        if p.startswith('/api/theme'):
+            try: return {'ok':True,'pref':_json.load(open(_v4_data_path('v4_theme.json')))}
+            except Exception: return {'ok':True,'pref':None}
+    except Exception as e:
+        return {'ok':False,'msg':str(e)}
+    return {'ok':False,'msg':'unknown v4 endpoint'}
+def v4_health():
+    now = int(_t.time()); dom = {}
+    try: c = cfg(); cons = containers()
+    except Exception: c = {}; cons = {}
+    def probe(name, key, path):
+        try:
+            s = cons.get(key) or {}
+            st, _ = hreq(s.get('addr'), s.get('port'), 'GET', path, None, None, 1.5)
+            dom[name] = {'status':'ok' if (st in (200,401,403)) else 'down'}
+        except Exception: dom[name] = {'status':'unknown'}
+    _ek = (cons.get('emby') or {}).get('key','')
+    probe('Emby 媒体库', 'emby', '/System/Ping?' + 'api_key' + '=' + str(_ek))
+    probe('PT 资源站(qB)', 'qb', '/')
+    probe('MT/MP 鉴权', 'moviepilot', '/')
+    overall='ok'; note=''
+    for k,v in dom.items():
+        if v['status']=='down': overall='partial'; note+=(note and '；')+k+' 不可用'
+        elif v['status']=='unknown': overall='partial'; note+=(note and '；')+k+' 状态未知'
+    def badge(s):
+        return '<span class="badge ok">正常</span>' if s=='ok' else ('<span class="badge err">异常</span>' if s=='down' else '<span class="badge warn">未知</span>')
+    return {'ok':True,'overall':overall,'domains':{k:{'badge':badge(v['status'])} for k,v in dom.items()},'note':note,
+            'watchdog':{'next_in':v4_wd_next(),'uptime':v4_wd_uptime(),'heal_count':v4_wd_heal(),'last':v4_wd_last()}}
+V4_WD = {'start':_t.time(),'heal':0,'last':'—'}
+def v4_wd_next(): return max(0, 60 - (int(_t.time()) - int(V4_WD['start'])) % 60)
+def v4_wd_uptime(): return '%dh' % int((_t.time() - V4_WD['start']) / 3600)
+def v4_wd_heal(): return V4_WD['heal']
+def v4_wd_last(): return V4_WD['last']
+def v4_jwt_state():
+    try:
+        fresh = MP_JWT.get('v') and (_t.time() - MP_JWT.get('ts',0) < 3000)
+        return {'ok':True,'state':'valid' if fresh else 'nocred','issued':bool(fresh),
+                'left':int(3000 - (_t.time() - MP_JWT.get('ts',0))) if fresh else None,
+                'expire_at':'—','fp':'****','last_ok':'—','bot':'—',
+                'reason':'' if fresh else 'MP JWT 未签发或已过期（馒头守护真实状态将于 Step9 深化接入）'}
+    except Exception as e:
+        return {'ok':True,'state':'nocred','issued':False,'left':None,'expire_at':'—','fp':'—','last_ok':'—','bot':'—','reason':str(e)}
+def v4_legacy_ports():
+    try:
+        src_lines = open(os.path.join(_V4_APP_DIR,'app.py'),'r',encoding='utf-8',errors='ignore').read().split('\n')
+        hits=[]
+        for i,l in enumerate(src_lines,1):
+            if '5678' in l and '45678' not in l:
+                hits.append('app.py:%d  %s' % (i, l.strip()[:120]))
+        return {'ok':True,'count':len(hits),'entries':hits[:50],'note':'以下为源码中残留的 5678 常量（端口已统一为 45678）。建议：改为 45678 后重启容器。'}
+    except Exception as e:
+        return {'ok':False,'msg':str(e),'entries':[]}
+def v4_config_export():
+    try:
+        c = cfg() or {}
+        out={}
+        for k,v in c.items():
+            if any(s in str(k).lower() for s in ('key','password','pass','token','secret','cookie','pwd')): out[k]='***'
+            else: out[k]=v
+        return out
+    except Exception: return {}
 
 if __name__ == '__main__':
     try:

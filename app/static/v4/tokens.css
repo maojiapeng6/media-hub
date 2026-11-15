@@ -1,0 +1,131 @@
+/* ============================================================
+   v4 Design Tokens — DTCG 风格集中化
+   组件内禁止写死颜色/圆角/阴影/动效时长，一律引用变量。
+   默认 = Obsidian Control（深色修复版）。各主题在 themes.css 覆盖。
+   ============================================================ */
+:root {
+  /* —— 四级表面（禁止纯黑糊成一片） —— */
+  --surface-0: #08090A;   /* canvas 页面底 */
+  --surface-1: #0F1011;   /* 卡片/导航容器 */
+  --surface-2: #161718;   /* 抬升面板 */
+  --surface-3: #23252A;   /* 交互态底色/边框邻接 */
+
+  /* —— 语义色（OKLCH/Radix 风格，保证对比度） —— */
+  --c-bg: var(--surface-0);
+  --c-panel: var(--surface-1);
+  --c-elev: var(--surface-2);
+  --c-hover: var(--surface-3);
+  --c-border: rgba(255,255,255,.08);
+  --c-border-strong: rgba(255,255,255,.16);
+  --c-text: #E6E8EA;        /* 正文 WCAG AA on surface-1 */
+  --c-text-dim: #9AA0A6;    /* 次级 */
+  --c-text-mute: #6B7178;   /* 弱 */
+  --c-accent: #FF8A3D;      /* 强调色（默认橙），每屏唯一主行动 */
+  --c-accent-weak: rgba(255,138,61,.14);
+  --c-accent-text: #1A0F06;
+
+  /* 状态色（降饱和统一） */
+  --c-ok: #46C98B;     --c-ok-bg: rgba(70,201,139,.14);
+  --c-warn: #E8B339;   --c-warn-bg: rgba(232,179,57,.14);
+  --c-err: #E5604D;    --c-err-bg: rgba(229,96,77,.14);
+  --c-info: #5AA9E6;   --c-info-bg: rgba(90,169,230,.14);
+  --c-degrade: #E08A3C;--c-degrade-bg: rgba(224,138,60,.14);
+
+  /* —— 间距阶梯（4px 基线） —— */
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px;
+  --s-6: 24px; --s-8: 32px; --s-12: 48px; --s-24: 96px;
+
+  /* —— 圆角三档（Liquid Glass 例外由主题覆盖） —— */
+  --r-card: 12px; --r-btn: 6px; --r-pill: 9999px;
+
+  /* —— 字阶 —— */
+  --f-display: 34px; --f-title: 22px; --f-body: 15px; --f-mono: 13px;
+  --lh-body: 1.5; --ls-display: -0.022em; --fw-max: 590;
+
+  /* —— 字体族（降级链，零外部依赖） —— */
+  --font-sans: "Inter","Geist","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono: "Geist Mono","JetBrains Mono","SFMono-Regular",ui-monospace,Menlo,Consolas,monospace;
+  --font-serif: "Source Serif 4","Noto Serif SC",Georgia,serif;
+
+  /* —— 阴影（仅一层，禁止堆叠 3 层+） —— */
+  --sh-1: 0 1px 2px rgba(0,0,0,.4);
+  --sh-inset: inset 0 1px 0 rgba(255,255,255,.04);
+  --sh-pop: 0 8px 32px rgba(0,0,0,.2);
+
+  /* —— 玻璃配方（渐进增强） —— */
+  --glass-bg: rgb(30 30 32 / .28);
+  --glass-border: 1px solid rgb(255 255 255 / .25);
+  --glass-radius: 20px;
+  --glass-blur: blur(12px) saturate(180%);
+
+  /* —— Motion Token（集中管理，组件禁止写死） —— */
+  --d-micro: 140ms;   --d-small: 180ms;  --d-medium: 300ms;
+  --d-page: 400ms;    --d-ceiling: 500ms; --d-stagger: 45ms;
+  --e-standard: cubic-bezier(.25,.46,.45,.94);
+  --e-decel: cubic-bezier(.16,1,.3,1);
+  --e-accel: cubic-bezier(.4,0,1,1);
+
+  /* —— 密度（二级调节） —— */
+  --density: 1; /* 0.85 紧凑 / 1 舒适 / 1.15 宽松 */
+  --card-pad: calc(16px * var(--density));
+  --row-gap: calc(12px * var(--density));
+
+  /* —— 图标线宽 / 光学尺寸 —— */
+  --icon-stroke: 1.75px;
+  --icon-16: 16px; --icon-20: 20px; --icon-24: 24px;
+
+  /* —— 焦点环 —— */
+  --focus-ring: 0 0 0 2px var(--c-bg), 0 0 0 4px var(--c-accent);
+
+  /* —— 性能预算相关 —— */
+  --clamp-w: 1400px;
+}
+
+/* 数字/时间/ID/指纹/倒计时 统一等宽 */
+.tnum, .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
+
+/* 焦点可见（键盘） */
+:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--r-btn); }
+
+/* 玻璃工具类（内容层禁止用玻璃套玻璃） */
+.glass {
+  background: var(--glass-bg);
+  border: var(--glass-border);
+  border-radius: var(--glass-radius);
+  box-shadow: var(--sh-pop);
+}
+@supports ((backdrop-filter: blur(12px)) or (-webkit-backdrop-filter: blur(12px))) {
+  .glass {
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+  }
+}
+
+/* 四级表面分层工具类 */
+.s0{background:var(--surface-0)} .s1{background:var(--surface-1)}
+.s2{background:var(--surface-2)} .s3{background:var(--surface-3)}
+.hairline{border:1px solid var(--c-border)}
+.hairline-t{border-top:1px solid var(--c-border)}
+.hairline-b{border-bottom:1px solid var(--c-border)}
+
+/* 强调色唯一主行动 */
+.btn-acc{background:var(--c-accent);color:var(--c-accent-text);border:none}
+.btn-acc:hover{filter:brightness(1.08)}
+
+/* 状态三件套（颜色+图标+文字）基础 */
+.badge{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:var(--r-pill);font-size:12px;font-weight:540}
+.badge.ok{color:var(--c-ok);background:var(--c-ok-bg)}
+.badge.warn{color:var(--c-warn);background:var(--c-warn-bg)}
+.badge.err{color:var(--c-err);background:var(--c-err-bg)}
+.badge.info{color:var(--c-info);background:var(--c-info-bg)}
+.badge.degrade{color:var(--c-degrade);background:var(--c-degrade-bg)}
+
+/* 降透明度/低性能：玻璃切实色 */
+@media (prefers-reduced-transparency: reduce) {
+  .glass { background: var(--surface-2); border:1px solid var(--c-border-strong); -webkit-backdrop-filter:none; backdrop-filter:none; }
+}
+/* 动效降级：位移缩放归零，仅保留 ≤100ms opacity */
+@media (prefers-reduced-motion: reduce) {
+  *,*::before,*::after{ animation-duration:.001ms!important; animation-iteration-count:1!important;
+    transition-duration:100ms!important; scroll-behavior:auto!important; }
+}
