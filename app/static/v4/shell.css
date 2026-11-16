@@ -182,3 +182,83 @@ kbd{font-family:var(--font-mono);font-size:11px;padding:1px 5px;border:1px solid
 .app.wallboard{grid-template-columns:1fr;grid-template-areas:"top" "main"}
 .app.wallboard .page{grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}
 .app.wallboard .metric-v{font-size:30px}
+
+/* ============================================================
+   v4.1 追加：导航位置（配合主题十维结构差异）
+   ============================================================ */
+[data-navpos="top"] .app{grid-template-columns:1fr!important;grid-template-rows:56px auto 1fr auto!important;grid-template-areas:"top" "side" "main" "op"!important}
+[data-navpos="top"] .sidebar{position:static;flex-direction:row;flex-wrap:wrap;gap:4px;border-radius:0;border-right:none;border-bottom:1px solid var(--c-border);padding:8px var(--s-4)}
+[data-navpos="top"] .sidebar .nav-group{flex-direction:row;align-items:center;gap:4px}
+[data-navpos="top"] .sidebar .nav-glabel{display:none}
+[data-navpos="top"] .nav-item{width:auto}
+[data-navpos="bottom"] .app{grid-template-columns:1fr!important;grid-template-rows:56px 1fr auto auto!important;grid-template-areas:"top" "main" "op" "side"!important}
+[data-navpos="bottom"] .sidebar{position:static;flex-direction:row;justify-content:center;flex-wrap:nowrap;gap:6px;border-radius:var(--r-pill);margin:0 auto var(--s-3);width:auto;max-width:94vw;overflow-x:auto}
+[data-navpos="bottom"] .sidebar .nav-group{flex-direction:row}
+[data-navpos="bottom"] .sidebar .nav-glabel{display:none}
+[data-navpos="bottom"] .nav-item{width:auto;white-space:nowrap}
+[data-navpos="grid"] .sidebar{width:100%;max-height:none}
+[data-navpos="grid"] .sidebar .nav-group{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:8px}
+[data-navpos="grid"] .nav-item{flex-direction:column;text-align:center;justify-content:center;padding:12px 6px}
+
+/* ============================================================
+   v4.1 追加：总览新卡片
+   ============================================================ */
+.port-note{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:var(--r-btn);background:var(--c-accent-weak);color:var(--c-accent);font-size:13px}
+.card-tools{display:flex;gap:2px}
+.tbmini{background:transparent;border:none;color:var(--c-text-mute);cursor:pointer;padding:3px;border-radius:4px;display:flex}
+.tbmini:hover{background:var(--c-hover);color:var(--c-text)}
+.tbmini .ico{width:16px;height:16px}
+.card.minimized .card-b{display:none}
+.card.minimized{max-height:56px}
+.diskrow{display:flex;flex-direction:column;gap:6px;padding-bottom:8px;border-bottom:1px dashed var(--c-border)}
+.disk-alert{display:flex;gap:10px;align-items:flex-start;padding:10px;border-radius:var(--r-btn);background:var(--c-err-bg);border:1px solid var(--c-err);color:var(--c-err)}
+.disk-alert b{font-weight:600}
+.bar{height:8px;border-radius:9999px;background:var(--surface-3);overflow:hidden}
+.bar i{display:block;height:100%;background:var(--c-accent);border-radius:9999px;transition:width var(--d-medium) var(--e-decel)}
+.diskrow.crit .bar i{background:var(--c-err);animation:pulse 1.6s var(--e-standard) infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.55}}
+.taskrow{display:flex;flex-direction:column;gap:6px;padding-bottom:8px;border-bottom:1px dashed var(--c-border)}
+.srvrow{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px dashed var(--c-border);font-size:13px}
+.srvrow .mono{margin-left:auto}
+.alertrow.err{grid-template-columns:auto 1fr auto;min-height:34px}
+.timeline{display:flex;flex-direction:column;gap:8px}
+.tl-row{display:flex;align-items:center;gap:10px;font-size:12px}
+.tl-dot{width:8px;height:8px;border-radius:50%;background:var(--c-heal,var(--c-ok));flex:0 0 auto}
+.add-widget{display:flex;align-items:center;justify-content:center;gap:8px;grid-column:1/-1;padding:16px;border:1px dashed var(--c-border-strong);border-radius:var(--r-card);background:transparent;color:var(--c-text-dim);cursor:pointer;font-size:13px;transition:background var(--d-micro),border-color var(--d-micro),color var(--d-micro)}
+.add-widget:hover{background:var(--c-accent-weak);border-color:var(--c-accent);color:var(--c-text)}
+
+/* ============================================================
+   v4.1 追加：外观面板新控件
+   ============================================================ */
+.ap-flow{padding:8px 12px;border-radius:var(--r-btn);background:var(--surface-2);border:1px solid var(--c-border);font-size:12px;color:var(--c-text-dim)}
+.seg{display:inline-flex;border:1px solid var(--c-border);border-radius:var(--r-btn);overflow:hidden}
+.seg button{padding:6px 16px;background:transparent;border:none;color:var(--c-text-dim);cursor:pointer;font-size:13px}
+.seg button.on{background:var(--c-accent);color:var(--c-accent-text)}
+.ap-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-top:8px}
+.acc-row{flex-wrap:wrap}
+input[type=color]{width:34px;height:28px;padding:0;border:1px solid var(--c-border);border-radius:6px;background:transparent;cursor:pointer}
+.sw input.mono{width:100px;background:var(--surface-2);color:var(--c-text);border:1px solid var(--c-border);border-radius:var(--r-btn);padding:4px 8px}
+.custom-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:9999px;background:var(--surface-2);border:1px solid var(--c-border);font-size:12px}
+.chip button{background:transparent;border:none;color:var(--c-accent);cursor:pointer;font-size:11px;padding:0 2px}
+
+/* ============================================================
+   v4.1 追加：模态（添加卡片/向导）
+   ============================================================ */
+.modal-mask{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:10001;animation:fade var(--d-small)}
+.modal{background:var(--surface-1);border:1px solid var(--c-border-strong);border-radius:var(--r-card);box-shadow:var(--sh-pop);padding:var(--s-6);width:min(560px,92vw);animation:pop var(--d-medium) var(--e-decel)}
+.modal h3{margin:0 0 var(--s-4);font-size:var(--f-title)}
+.wp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;margin-bottom:var(--s-4)}
+.wp-grid .btn{text-align:left}
+
+/* ============================================================
+   v4.1 追加：微交互补强
+   ============================================================ */
+.sk{animation:shimmer 1.2s infinite}
+.empty-ico .ico,.empty-ico svg{width:36px;height:36px;opacity:.7}
+.badge svg,.ghealth svg,.health3 svg{width:14px;height:14px}
+.metric{animation:cardIn var(--d-medium) var(--e-decel) both}
+@keyframes cardIn{from{opacity:0;transform:translateY(6px)}}
+.alertrow.err{animation:slideIn var(--d-medium) var(--e-decel)}
+@keyframes slideIn{from{opacity:0;transform:translateX(-8px)}}
+.min-chip .ico{width:14px;height:14px}

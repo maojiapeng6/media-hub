@@ -28479,7 +28479,7 @@ class H(BaseHTTPRequestHandler):
         # ★ v4 重制：新增只读状态/健康/审计/配置/外观接口 + 静态资源（不改动任何现有链路）
         if p == '/v4' or p == '/v4/' or p.startswith('/static/v4/'):
             return v4_route(self, p)
-        if p == '/api/healthz' or p == '/api/v4/manifest' or p.startswith('/api/status') or p.startswith('/api/jwt') or p.startswith('/api/freshness') or p.startswith('/api/audit') or p.startswith('/api/config/export') or p.startswith('/api/diagnose/legacy') or p.startswith('/api/layout') or p.startswith('/api/theme'):
+        if p == '/api/healthz' or p == '/api/v4/manifest' or p.startswith('/api/status') or p.startswith('/api/jwt') or p.startswith('/api/freshness') or p.startswith('/api/audit') or p.startswith('/api/config/export') or p.startswith('/api/diagnose/legacy') or p.startswith('/api/layout') or p.startswith('/api/theme') or p.startswith('/api/monitor'):
             return self._j(v4_api(self, p, q1))
         # ★ v6 Emby 图片代理：/embyimg/<which>/<itemid>/<imgtype>?w=300&t=<tag>
         #   前端不接触 API Key，商用安全；走后端转发并缓存（1 天）。
@@ -34445,9 +34445,12 @@ def v4_route(handler, p):
 def v4_api(handler, p, q1):
     now = int(_t.time())
     try:
-        if p == '/api/healthz': return {'ok':True,'status':'ok','ts':now,'version':globals().get('VERSION','4.0.0-rc1')}
-        if p == '/api/v4/manifest': return {'ok':True,'themes':['obsidian','liquid-glass','light-studio','terminal','editorial','neon-ops'],'accents':['orange','blue','cyan','purple','green','rose'],'version':'4.0.0-rc1'}
+        if p == '/api/healthz': return {'ok':True,'status':'ok','ts':now,'version':'4.1.0'}
+        if p == '/api/v4/manifest': return {'ok':True,'themes':['obsidian','liquid-glass','light-studio','terminal','editorial','neon-ops','pastel-soft','arctic-night'],'accents':['orange','blue','cyan','purple','green','rose','red','amber','teal','indigo','lime','slate'],'version':'4.1.0'}
         if p.startswith('/api/status/health'): return v4_health()
+        if p.startswith('/api/status/disk'): return v4_disk()
+        if p.startswith('/api/monitor/containers'): return v4_containers()
+        if p.startswith('/api/monitor/tasks'): return v4_tasks()
         if p.startswith('/api/jwt/state'): return v4_jwt_state()
         if p.startswith('/api/freshness'): return {'ok':True,'now':now,'threshold':120}
         if p.startswith('/api/audit'): return {'ok':True,'rows':[]}
@@ -34482,7 +34485,8 @@ def v4_health():
         elif v['status']=='unknown': overall='partial'; note+=(note and '；')+k+' 状态未知'
     def badge(s):
         return '<span class="badge ok">正常</span>' if s=='ok' else ('<span class="badge err">异常</span>' if s=='down' else '<span class="badge warn">未知</span>')
-    return {'ok':True,'overall':overall,'domains':{k:{'badge':badge(v['status'])} for k,v in dom.items()},'note':note,
+    _dtxt={'ok':'正常','down':'异常','unknown':'未知'}
+    return {'ok':True,'overall':overall,'domains':{k:{'state':('ok' if v['status']=='ok' else ('err' if v['status']=='down' else 'partial')),'text':_dtxt[v['status']],'badge':badge(v['status'])} for k,v in dom.items()},'note':note,
             'watchdog':{'next_in':v4_wd_next(),'uptime':v4_wd_uptime(),'heal_count':v4_wd_heal(),'last':v4_wd_last()}}
 V4_WD = {'start':_t.time(),'heal':0,'last':'—'}
 def v4_wd_next(): return max(0, 60 - (int(_t.time()) - int(V4_WD['start'])) % 60)
@@ -34505,9 +34509,84 @@ def v4_legacy_ports():
         for i,l in enumerate(src_lines,1):
             if '5678' in l and '45678' not in l:
                 hits.append('app.py:%d  %s' % (i, l.strip()[:120]))
-        return {'ok':True,'count':len(hits),'entries':hits[:50],'note':'以下为源码中残留的 5678 常量（端口已统一为 45678）。建议：改为 45678 后重启容器。'}
+        return {'ok':True,'count':len(hits),'entries':hits[:50],'note':'端口口径：宿主机 5678（正确内部端口）· 公网/反代 45678。以下为源码中的 5678 常量，属正常宿主机端口定义，无需修改。'}
     except Exception as e:
         return {'ok':False,'msg':str(e),'entries':[]}
+def v4_disk():
+    """只读：磁盘水位（宿主机 /vol1 为主，容器可读分区兜底）。"""
+    try:
+        import shutil as _sh
+        out=[]
+        for mnt in ('/vol1','/'):
+            try:
+                t,u,f = _sh.disk_usage(mnt)
+                pct = round(u/t*100,1)
+                out.append({'mount':mnt,'pct':pct,'avail':'%.1fG'%(f/1024**3),'total':'%.1fG'%(t/1024**3)})
+            except Exception: pass
+        if not out: return {'ok':True,'disks':[],'note':'无可读分区'}
+        # 去重（/vol1 与 / 可能同盘）
+        seen=set(); uniq=[]
+        for d in out:
+            key=(d['total'],d['pct'])
+            if key in seen: continue
+            seen.add(key); uniq.append(d)
+        return {'ok':True,'disks':uniq,'now':int(_t.time()),'threshold':120}
+    except Exception as e:
+        return {'ok':True,'disks':[],'note':str(e)}
+def v4_containers():
+    """只读：容器列表与资源（Docker Engine API，失败优雅降级，绝不 500）。"""
+    try:
+        import urllib.request as _ur
+        sock='/var/run/docker.sock'
+        if not os.path.exists(sock):
+            return {'ok':True,'containers':[],'note':'容器内未挂载 Docker Socket，容器监控需在配置中心接入地址'}
+        # 通过 unix socket 调 Docker API
+        import http.client as _hc
+        class _UnixConn(_hc.HTTPConnection):
+            def connect(self):
+                import socket as _sk
+                s=_sk.socket(_sk.AF_UNIX,_sk.SOCK_STREAM); s.settimeout(2.5); s.connect(sock); self.sock=s
+        c=_UnixConn('localhost'); c.request('GET','/containers/json?all=1'); r=c.getresponse()
+        arr=_json.loads(r.read().decode('utf-8','ignore'))
+        rows=[]
+        for x in arr[:60]:
+            names=(x.get('Names') or [''])[0].lstrip('/')
+            rows.append({'name':names,'state':x.get('State',''),'image':(x.get('Image') or '')[:40],
+                         'cpu':None,'mem':None})
+        # 尝试读 stats（取前 8 个 running，避免阻塞）
+        for row in rows[:8]:
+            if row['state']!='running': continue
+            try:
+                cid=(x.get('Id') or '')[:12]
+                c2=_UnixConn('localhost'); c2.request('GET','/containers/%s/stats?stream=0'%row['name']); r2=c2.getresponse()
+                st=_json.loads(r2.read().decode('utf-8','ignore'))
+                cpu=st.get('cpu_stats',{}).get('cpu_usage',{}).get('total_usage',0)
+                prev=st.get('precpu_stats',{}).get('cpu_usage',{}).get('total_usage',0)
+                syscpu=st.get('cpu_stats',{}).get('system_cpu_usage',0)
+                presys=st.get('precpu_stats',{}).get('system_cpu_usage',0)
+                if syscpu and presys and syscpu!=presys:
+                    row['cpu']=round((cpu-prev)/(syscpu-presys)*100,1)
+                row['mem']=round(st.get('memory_stats',{}).get('usage',0)/1024**2)
+            except Exception: pass
+        return {'ok':True,'containers':rows,'now':int(_t.time()),'threshold':120}
+    except Exception as e:
+        return {'ok':True,'containers':[],'note':str(e)}
+def v4_tasks():
+    """只读：进行中任务（从现有 q2f/kalive 状态派生，不伪造进度）。"""
+    try:
+        import json as _j2
+        base=os.path.join(_V4_APP_DIR,'')
+        tasks=[]
+        # MT 整理进度：尝试从 oplog/状态文件取，取不到则空（不伪造）
+        for fn,label in (('q2f_state.json','夸克转存'),('kalive.json','PT 保号')):
+            try:
+                d=_j2.load(open(os.path.join(base,fn),'r',encoding='utf-8',errors='ignore'))
+                if isinstance(d,dict) and d.get('running'):
+                    tasks.append({'id':fn,'name':label,'pct':d.get('pct'),'eta':d.get('eta')})
+            except Exception: pass
+        return {'ok':True,'tasks':tasks,'now':int(_t.time())}
+    except Exception as e:
+        return {'ok':True,'tasks':[],'note':str(e)}
 def v4_config_export():
     try:
         c = cfg() or {}

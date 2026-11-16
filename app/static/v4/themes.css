@@ -1,136 +1,267 @@
 /* ============================================================
-   v4 六套大主题（结构级切换：版式/材质/圆角/字体/密度/图标线宽/动效/边框阴影/装饰 九维互异）
-   二级调节（accent/亮度/密度/动效/圆角字阶/主题开关）通过 body 属性叠加。
-   统一以 WCAG AA / APCA 为目标（accent 降饱和保证对比度）。
+   v4.1 八套大主题 — 结构级切换（十维互异）+ 每套深浅两套独立色板
+   data-theme  = 主题包；data-mode = light/dark（每套各自定义，非反相）
+   切主题同时改变：版式栅格/导航位置/卡片形状/材质/圆角/字体/密度/图标/动效/边框阴影/装饰
    ============================================================ */
 
-/* —— 2 · Obsidian Control（默认深色修复版） —— */
-[data-theme="obsidian"] {
+/* ============ 2 · Obsidian Control 曜石运维（默认，近黑暖灰） ============ */
+[data-theme="obsidian"]{
   --surface-0:#08090A; --surface-1:#0F1011; --surface-2:#161718; --surface-3:#23252A;
   --c-border:rgba(255,255,255,.08); --c-border-strong:rgba(255,255,255,.16);
   --c-text:#E6E8EA; --c-text-dim:#9AA0A6; --c-text-mute:#6B7178;
-  --glass-bg:rgb(30 30 32 / .28); --glass-border:1px solid rgb(255 255 255 / .25);
-  --glass-radius:20px;
+  --c-accent:#FF8A3D; --c-accent-weak:rgba(255,138,61,.14); --c-accent-text:#1A0F06;
+  --c-ok:#46C98B;--c-warn:#E8B339;--c-err:#E5604D;--c-info:#5AA9E6;--c-degrade:#E08A3C;
+  --glass-bg:rgb(30 30 32 / .28); --glass-border:1px solid rgb(255 255 255 / .25); --glass-radius:12px;
   --r-card:12px; --r-btn:6px;
   --f-display:34px; --f-title:22px; --f-body:15px; --fw-max:590;
   --font-sans:"Inter","Geist","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
-  --icon-stroke:1.75px;
-  --d-medium:300ms; --d-page:400ms;
-  --sh-pop:0 8px 32px rgba(0,0,0,.2);
+  --icon-stroke:1.75px; --d-medium:160ms; --d-page:400ms; --d-stagger:40ms;
+  --sh-pop:0 8px 32px rgba(0,0,0,.2); --density:.9;
+  --nav-pos:left; --app-cols:220px 1fr; --card-span:1;
+  --c-gray:var(--zinc);
 }
-
-/* —— 3 · Light Studio（明亮工作台） —— */
-[data-theme="light-studio"] {
+[data-theme="obsidian"][data-mode="light"]{
   --surface-0:#F4F5F7; --surface-1:#FFFFFF; --surface-2:#FBFBFC; --surface-3:#ECEEF1;
   --c-border:rgba(0,0,0,.10); --c-border-strong:rgba(0,0,0,.18);
   --c-text:#1B1D21; --c-text-dim:#54585F; --c-text-mute:#8A9099;
-  --c-accent:#D9661A; --c-accent-weak:rgba(217,102,26,.12); --c-accent-text:#fff;
-  --c-ok:#1F9D63; --c-warn:#B5841B; --c-err:#C0392B; --c-info:#2C77B8; --c-degrade:#B5701C;
-  --glass-bg:rgb(255 255 255 / .6); --glass-border:1px solid rgba(0,0,0,.12); --glass-radius:10px;
-  --r-card:10px; --r-btn:6px;
-  --f-display:34px; --f-title:22px; --f-body:15px;
-  --font-sans:"Source Sans 3","Inter","PingFang SC",system-ui,sans-serif;
-  --icon-stroke:1.75px;
-  --d-medium:280ms; --d-page:380ms;
-  --sh-1:0 1px 2px rgba(0,0,0,.08); --sh-pop:0 6px 24px rgba(0,0,0,.10);
-  --density:1.08;
+  --c-accent:#D9661A; --c-accent-text:#fff;
+  --c-ok:#1F9D63;--c-warn:#B5841B;--c-err:#C0392B;--c-info:#2C77B8;--c-degrade:#B5701C;
+  --glass-bg:rgb(255 255 255 / .6); --glass-border:1px solid rgba(0,0,0,.12);
+  --sh-pop:0 6px 24px rgba(0,0,0,.10);
 }
 
-/* —— 4 · Terminal（终端极客：全屏密集等宽，纯色无材质，圆角近 0） —— */
-[data-theme="terminal"] {
+/* ============ 1 · Liquid Glass 液态玻璃（悬浮层+光晕，圆角20-28） ============ */
+[data-theme="liquid-glass"]{
+  --surface-0:#0B0D12; --surface-1:#12151C; --surface-2:#1A1E27; --surface-3:#262B37;
+  --c-border:rgba(255,255,255,.10); --c-border-strong:rgba(255,255,255,.20);
+  --c-text:#EAF0F7; --c-text-dim:#A7B2C2; --c-text-mute:#727E90;
+  --c-accent:#7AA2FF; --c-accent-text:#04101F;
+  --c-ok:#5FE3A8;--c-warn:#F0C24B;--c-err:#FF7A6B;--c-info:#7AA2FF;--c-degrade:#F0A24B;
+  --glass-bg:rgb(40 44 56 / .32); --glass-border:1px solid rgb(255 255 255 / .28); --glass-radius:24px;
+  --glass-blur:blur(16px) saturate(190%);
+  --r-card:24px; --r-btn:12px;
+  --f-display:36px; --f-title:23px; --f-body:15px;
+  --font-sans:"Geist","Inter","PingFang SC",system-ui,sans-serif;
+  --icon-stroke:1.5px; --d-medium:340ms; --d-page:460ms; --d-stagger:55ms;
+  --sh-pop:0 12px 40px rgba(0,0,0,.28); --density:1.04;
+  --nav-pos:left; --app-cols:244px 1fr; --card-span:1; --c-gray:var(--mist);
+}
+[data-theme="liquid-glass"][data-mode="light"]{
+  --surface-0:#EEF1F7; --surface-1:#F7F9FD; --surface-2:#FFFFFF; --surface-3:#E2E8F2;
+  --c-border:rgba(40,60,100,.10); --c-border-strong:rgba(40,60,100,.18);
+  --c-text:#1A2233; --c-text-dim:#4E5A70; --c-text-mute:#7C8799;
+  --c-accent:#3B6FE0; --c-accent-text:#fff;
+  --c-ok:#1F9D63;--c-warn:#B5841B;--c-err:#C0392B;--c-info:#3B6FE0;--c-degrade:#B5701C;
+  --glass-bg:rgb(255 255 255 / .5); --glass-border:1px solid rgba(255,255,255,.7);
+}
+[data-theme="liquid-glass"] .glass{box-shadow:inset 0 1px 0 rgba(255,255,255,.18),0 12px 40px rgba(0,0,0,.28)}
+[data-theme="liquid-glass"] .glass::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:radial-gradient(120% 80% at 20% 0%,rgba(255,255,255,.10),transparent 60%)}
+
+/* ============ 3 · Light Studio 明亮工作台（纸感宽留白，内容居中） ============ */
+[data-theme="light-studio"]{
+  --surface-0:#F4F5F7; --surface-1:#FFFFFF; --surface-2:#FBFBFC; --surface-3:#ECEEF1;
+  --c-border:rgba(0,0,0,.10); --c-border-strong:rgba(0,0,0,.18);
+  --c-text:#1B1D21; --c-text-dim:#54585F; --c-text-mute:#8A9099;
+  --c-accent:#D9661A; --c-accent-text:#fff;
+  --c-ok:#1F9D63;--c-warn:#B5841B;--c-err:#C0392B;--c-info:#2C77B8;--c-degrade:#B5701C;
+  --glass-bg:rgb(255 255 255 / .6); --glass-border:1px solid rgba(0,0,0,.12); --glass-radius:10px;
+  --r-card:10px; --r-btn:6px; --f-display:34px; --f-title:22px; --f-body:15px;
+  --font-sans:"Source Sans 3","Inter","PingFang SC",system-ui,sans-serif;
+  --icon-stroke:1.75px; --d-medium:280ms; --d-page:380ms;
+  --sh-1:0 1px 2px rgba(0,0,0,.08); --sh-pop:0 6px 24px rgba(0,0,0,.10); --density:1.12;
+  --nav-pos:left; --app-cols:200px 1fr; --card-span:1; --c-gray:var(--stone);
+  --clamp-w:1100px;
+}
+[data-theme="light-studio"][data-mode="dark"]{
+  --surface-0:#12151A; --surface-1:#1B1F26; --surface-2:#232830; --surface-3:#2E343E;
+  --c-border:rgba(255,255,255,.10); --c-border-strong:rgba(255,255,255,.18);
+  --c-text:#E8EAEE; --c-text-dim:#A6ADB8; --c-text-mute:#79818D;
+  --c-accent:#FF9A4D; --c-accent-text:#1A0F06;
+  --c-ok:#46C98B;--c-warn:#E8B339;--c-err:#E5604D;--c-info:#5AA9E6;--c-degrade:#E08A3C;
+  --glass-bg:rgb(30 34 42 / .4); --glass-border:1px solid rgba(255,255,255,.14);
+  --sh-pop:0 8px 28px rgba(0,0,0,.35);
+}
+
+/* ============ 4 · Terminal 终端极客（全屏密集等宽，纯色无材质） ============ */
+[data-theme="terminal"]{
   --surface-0:#0A0C0A; --surface-1:#0E110E; --surface-2:#121712; --surface-3:#1C241C;
   --c-border:rgba(120,255,140,.14); --c-border-strong:rgba(120,255,140,.28);
   --c-text:#C8F7CF; --c-text-dim:#7FBF86; --c-text-mute:#4E7A54;
   --c-accent:#39FF6A; --c-accent-weak:rgba(57,255,106,.12); --c-accent-text:#04140A;
-  --c-ok:#39FF6A; --c-warn:#E8D339; --c-err:#FF5C5C; --c-info:#5AC8FF; --c-degrade:#E0A93C;
+  --c-ok:#39FF6A;--c-warn:#E8D339;--c-err:#FF5C5C;--c-info:#5AC8FF;--c-degrade:#E0A93C;
   --glass-bg:#0E110E; --glass-border:1px solid rgba(120,255,140,.18); --glass-radius:2px;
-  --r-card:2px; --r-btn:2px; --r-pill:2px;
-  --f-display:24px; --f-title:16px; --f-body:13px; --f-mono:13px;
-  --font-sans:var(--font-mono); --font-mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
-  --icon-stroke:0; /* 字符/线框图标 */
+  --r-card:2px; --r-btn:2px; --r-pill:2px; --f-display:24px; --f-title:16px; --f-body:13px; --f-mono:13px;
+  --font-sans:var(--font-mono); --icon-stroke:0;
   --d-medium:110ms; --d-page:120ms; --d-stagger:20ms;
   --sh-pop:0 0 0 rgba(0,0,0,0); --density:.82;
-  --scanline:0; /* 默认关 */
+  --scanline:0;
+  --nav-pos:top; --app-cols:1fr; --app-rows:auto 1fr auto; --card-span:1; --c-gray:var(--olive);
 }
+[data-theme="terminal"][data-mode="light"]{
+  --surface-0:#E8EDE8; --surface-1:#F4F7F4; --surface-2:#FFFFFF; --surface-3:#D8E3D8;
+  --c-border:rgba(20,90,30,.20); --c-border-strong:rgba(20,90,30,.34);
+  --c-text:#12331A; --c-text-dim:#356B42; --c-text-mute:#5C8A66;
+  --c-accent:#128A32; --c-accent-text:#fff;
+  --c-ok:#128A32;--c-warn:#8A6A00;--c-err:#B32020;--c-info:#1466A0;--c-degrade:#8A5A10;
+  --glass-bg:#F4F7F4;
+}
+[data-theme="terminal"][data-scanline="1"] body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:9999;background:repeating-linear-gradient(0deg,rgba(120,255,140,.035) 0 1px,transparent 1px 3px)}
 
-/* —— 5 · Editorial（编排杂志：12 栏强栅格，衬线大标题，宽松留白） —— */
-[data-theme="editorial"] {
+/* ============ 5 · Editorial 编排杂志（12栏强栅格，衬线大标题） ============ */
+[data-theme="editorial"]{
   --surface-0:#FAF8F4; --surface-1:#FFFFFF; --surface-2:#FCFBF8; --surface-3:#EFEBE3;
   --c-border:rgba(0,0,0,.08); --c-border-strong:rgba(0,0,0,.16);
   --c-text:#23211C; --c-text-dim:#5A564C; --c-text-mute:#8C8678;
-  --c-accent:#9A2B1E; --c-accent-weak:rgba(154,43,30,.10); --c-accent-text:#fff;
-  --c-ok:#2E6B3E; --c-warn:#9A6B12; --c-err:#A3301F; --c-info:#2E5A8C; --c-degrade:#8A5A18;
+  --c-accent:#9A2B1E; --c-accent-text:#fff;
+  --c-ok:#2E6B3E;--c-warn:#9A6B12;--c-err:#A3301F;--c-info:#2E5A8C;--c-degrade:#8A5A18;
   --glass-bg:rgb(255 255 255 / .7); --glass-border:1px solid rgba(0,0,0,.10); --glass-radius:4px;
-  --r-card:4px; --r-btn:4px;
-  --f-display:46px; --f-title:24px; --f-body:16px; --ls-display:-0.01em;
-  --font-sans:var(--font-serif); --font-mono:"IBM Plex Mono",ui-monospace,monospace;
-  --icon-stroke:1.5px;
+  --r-card:4px; --r-btn:4px; --f-display:46px; --f-title:24px; --f-body:16px; --ls-display:-0.01em;
+  --font-sans:var(--font-serif); --icon-stroke:1.5px;
   --d-medium:320ms; --d-page:440ms; --density:1.12;
   --sh-pop:0 2px 18px rgba(0,0,0,.06);
+  --nav-pos:top; --app-cols:1fr; --app-rows:auto 1fr auto; --card-span:1; --c-gray:var(--taupe);
+  --clamp-w:1200px;
 }
+[data-theme="editorial"][data-mode="dark"]{
+  --surface-0:#1A1814; --surface-1:#232019; --surface-2:#2C2820; --surface-3:#3A352A;
+  --c-border:rgba(255,240,210,.10); --c-border-strong:rgba(255,240,210,.18);
+  --c-text:#F0EAD9; --c-text-dim:#C0B49A; --c-text-mute:#8F846C;
+  --c-accent:#E0795E; --c-accent-text:#1A0E08;
+  --c-ok:#6FBF7E;--c-warn:#D9AE4B;--c-err:#D96A55;--c-info:#6FA0D0;--c-degrade:#C99A4F;
+  --glass-bg:rgb(40 36 28 / .5); --glass-border:1px solid rgba(255,240,210,.12);
+}
+[data-theme="editorial"] .brand-t,h1,h2,.page-head h2{font-family:var(--font-serif)}
 
-/* —— 6 · Neon Ops（霓虹调度台：深色实底+发光描边，大屏指标放大） —— */
-[data-theme="neon-ops"] {
+/* ============ 6 · Neon Ops 霓虹调度台（大屏指标放大+发光描边） ============ */
+[data-theme="neon-ops"]{
   --surface-0:#05060A; --surface-1:#0A0C14; --surface-2:#0F1320; --surface-3:#1A2138;
   --c-border:rgba(80,200,255,.22); --c-border-strong:rgba(80,200,255,.40);
   --c-text:#DCEBFF; --c-text-dim:#8FB4DD; --c-text-mute:#57719A;
-  --c-accent:#2BD9FF; --c-accent-weak:rgba(43,217,255,.14); --c-accent-text:#02121A;
-  --c-ok:#39FFB0; --c-warn:#FFD23C; --c-err:#FF5C7A; --c-info:#5AA9FF; --c-degrade:#FF9E3C;
+  --c-accent:#2BD9FF; --c-accent-text:#02121A;
+  --c-ok:#39FFB0;--c-warn:#FFD23C;--c-err:#FF5C7A;--c-info:#5AA9FF;--c-degrade:#FF9E3C;
   --glass-bg:rgb(15 19 32 / .5); --glass-border:1px solid rgba(80,200,255,.30); --glass-radius:8px;
-  --r-card:8px; --r-btn:6px;
-  --f-display:40px; --f-title:22px; --f-body:14px;
-  --font-sans:"Geist","Inter",system-ui,sans-serif; --font-mono:"Geist Mono",ui-monospace,monospace;
-  --icon-stroke:2px;
-  --d-medium:260ms; --d-page:360ms;
-  --sh-pop:0 0 24px rgba(43,217,255,.12); --glow:0 0 6px var(--c-accent);
-  --density:.92;
+  --r-card:8px; --r-btn:6px; --f-display:40px; --f-title:22px; --f-body:14px;
+  --font-sans:"Geist","Inter",system-ui,sans-serif;
+  --icon-stroke:2px; --d-medium:260ms; --d-page:360ms;
+  --sh-pop:0 0 24px rgba(43,217,255,.12); --glow:0 0 6px var(--c-accent); --density:.92;
+  --nav-pos:left; --app-cols:236px 1fr; --card-span:1; --c-gray:var(--mist);
 }
-/* Neon 发光 + 扫描线（reduced-motion/低性能自动关） */
-[data-theme="neon-ops"] .glow { text-shadow: var(--glow); }
-[data-theme="neon-ops"][data-scanline="1"] body::after {
-  content:""; position:fixed; inset:0; pointer-events:none; z-index:9999;
-  background:repeating-linear-gradient(0deg, rgba(255,255,255,.025) 0 1px, transparent 1px 3px);
+[data-theme="neon-ops"][data-mode="light"]{
+  --surface-0:#EAF2FF; --surface-1:#F6FAFF; --surface-2:#FFFFFF; --surface-3:#D8E8FB;
+  --c-border:rgba(20,100,180,.20); --c-border-strong:rgba(20,100,180,.36);
+  --c-text:#0C2340; --c-text-dim:#3A6A9E; --c-text-mute:#638BB4;
+  --c-accent:#0086B8; --c-accent-text:#fff;
+  --c-ok:#12845E;--c-warn:#9A7400;--c-err:#C03050;--c-info:#0086B8;--c-degrade:#B56400;
+  --glow:0 0 4px rgba(0,134,184,.35);
 }
+[data-theme="neon-ops"] .glow,.metric-v{text-shadow:var(--glow)}
+[data-theme="neon-ops"][data-scanline="1"] body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:9999;background:repeating-linear-gradient(0deg,rgba(255,255,255,.025) 0 1px,transparent 1px 3px)}
+[data-theme="neon-ops"][data-grid="1"] .main{background-image:linear-gradient(var(--c-border) 1px,transparent 1px),linear-gradient(90deg,var(--c-border) 1px,transparent 1px);background-size:32px 32px}
 
-/* —— 1 · Liquid Glass（悬浮功能层+光晕动态光照，圆角 20-28） —— */
-[data-theme="liquid-glass"] {
-  --surface-0:#0B0D12; --surface-1:#12151C; --surface-2:#1A1E27; --surface-3:#262B37;
-  --c-border:rgba(255,255,255,.10); --c-border-strong:rgba(255,255,255,.20);
-  --c-text:#EAF0F7; --c-text-dim:#A7B2C2; --c-text-mute:#727E90;
-  --c-accent:#7AA2FF; --c-accent-weak:rgba(122,162,255,.16); --c-accent-text:#04101F;
-  --c-ok:#5FE3A8; --c-warn:#F0C24B; --c-err:#FF7A6B; --c-info:#7AA2FF; --c-degrade:#F0A24B;
-  --glass-bg:rgb(40 44 56 / .32); --glass-border:1px solid rgb(255 255 255 / .28); --glass-radius:24px;
-  --glass-blur:blur(16px) saturate(190%);
-  --r-card:22px; --r-btn:12px; --r-pill:9999px;
-  --f-display:36px; --f-title:23px; --f-body:15px;
-  --font-sans:"Geist","Inter","PingFang SC",system-ui,sans-serif;
-  --icon-stroke:1.5px;
-  --d-medium:340ms; --d-page:460ms; --d-stagger:55ms;
-  --sh-pop:0 12px 40px rgba(0,0,0,.28);
-  --density:1.04;
+/* ============ 7 · Pastel Soft 柔和粉彩（Catppuccin/Rose Pine，圆润） ============ */
+[data-theme="pastel-soft"]{
+  --surface-0:#181825; --surface-1:#1E1E2E; --surface-2:#262638; --surface-3:#313244;
+  --c-border:rgba(205,175,225,.14); --c-border-strong:rgba(205,175,225,.24);
+  --c-text:#CDD6F4; --c-text-dim:#A6ADC8; --c-text-mute:#6C7086;
+  --c-accent:#F5B8DE; --c-accent-weak:rgba(245,184,222,.14); --c-accent-text:#2A1020;
+  --c-ok:#A6E3A1;--c-warn:#F9E2A7;--c-err:#F38BA8;--c-info:#89B4FA;--c-degrade:#FAB387;
+  --glass-bg:rgb(40 38 58 / .35); --glass-border:1px solid rgba(205,175,225,.22); --glass-radius:18px;
+  --r-card:18px; --r-btn:10px; --f-display:34px; --f-title:22px; --f-body:15px;
+  --font-sans:"Nunito","Quicksand","PingFang SC",system-ui,sans-serif;
+  --icon-stroke:2px; --d-medium:360ms; --d-page:460ms; --d-stagger:60ms;
+  --sh-pop:0 10px 36px rgba(0,0,0,.22); --density:1.04;
+  --nav-pos:left; --app-cols:232px 1fr; --card-span:1; --c-gray:var(--mauve);
 }
-[data-theme="liquid-glass"] .glass::before{
-  content:""; position:absolute; inset:0; border-radius:inherit; pointer-events:none;
-  background:radial-gradient(120% 80% at 20% 0%, rgba(255,255,255,.10), transparent 60%);
+[data-theme="pastel-soft"][data-mode="light"]{
+  --surface-0:#F5EFF5; --surface-1:#FBF7FC; --surface-2:#FFFFFF; --surface-3:#EDE3EE;
+  --c-border:rgba(120,80,130,.12); --c-border-strong:rgba(120,80,130,.20);
+  --c-text:#3A2E40; --c-text-dim:#6E5F76; --c-text-mute:#9A8CA0;
+  --c-accent:#C0508F; --c-accent-text:#fff;
+  --c-ok:#3E9A5E;--c-warn:#B08920;--c-err:#C04068;--c-info:#4A7FC0;--c-degrade:#C07038;
+  --glass-bg:rgb(255 255 255 / .55); --glass-border:1px solid rgba(255,255,255,.8);
 }
+[data-theme="pastel-soft"] body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.02;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
 
-/* —— 二级调节：强调色（accent 语义阶，保证对比度） —— */
+/* ============ 8 · Arctic Night 极夜冷蓝（Nord/Tokyo Night） ============ */
+[data-theme="arctic-night"]{
+  --surface-0:#0B1220; --surface-1:#111B2E; --surface-2:#18243A; --surface-3:#22314C;
+  --c-border:rgba(136,192,208,.14); --c-border-strong:rgba(136,192,208,.26);
+  --c-text:#D8E6EF; --c-text-dim:#9FB3C8; --c-text-mute:#6B8299;
+  --c-accent:#88C0D0; --c-accent-weak:rgba(136,192,208,.14); --c-accent-text:#08161E;
+  --c-ok:#A3BE8C;--c-warn:#EBCB8B;--c-err:#BF616A;--c-info:#81A1C1;--c-degrade:#D08770;
+  --glass-bg:rgb(20 32 52 / .38); --glass-border:1px solid rgba(136,192,208,.20); --glass-radius:6px;
+  --r-card:6px; --r-btn:4px; --f-display:32px; --f-title:21px; --f-body:14px;
+  --font-sans:"Inter","SF Pro Text","PingFang SC",system-ui,sans-serif;
+  --icon-stroke:1.5px; --d-medium:240ms; --d-page:340ms;
+  --sh-pop:0 6px 24px rgba(0,0,0,.26); --density:.9;
+  --nav-pos:left; --app-cols:214px 1fr; --card-span:1; --c-gray:var(--mist);
+}
+[data-theme="arctic-night"][data-mode="light"]{
+  --surface-0:#EAF0FA; --surface-1:#F5F9FF; --surface-2:#FFFFFF; --surface-3:#DCE7F5;
+  --c-border:rgba(40,80,130,.12); --c-border-strong:rgba(40,80,130,.22);
+  --c-text:#1C3247; --c-text-dim:#4A6480; --c-text-mute:#7C94AC;
+  --c-accent:#3E7FA8; --c-accent-text:#fff;
+  --c-ok:#4E8A55;--c-warn:#9A7A28;--c-err:#B25058;--c-info:#3E7FA8;--c-degrade:#B26B48;
+  --glass-bg:rgb(255 255 255 / .55); --glass-border:1px solid rgba(255,255,255,.8);
+}
+[data-theme="arctic-night"][data-grid="1"] .main{background-image:linear-gradient(var(--c-border) 1px,transparent 1px),linear-gradient(90deg,var(--c-border) 1px,transparent 1px);background-size:40px 40px}
+
+/* ============================================================
+   导航位置随主题改变（十维结构差异之"导航位置与形态"）
+   ============================================================ */
+/* 顶栏导航（terminal / editorial） */
+[data-navpos="top"] .app{grid-template-columns:1fr;grid-template-rows:56px auto 1fr auto}
+[data-navpos="top"] .sidebar{grid-column:1;grid-row:2;position:static;width:auto;height:auto;flex-direction:row;flex-wrap:wrap;gap:4px;border-right:none;border-bottom:1px solid var(--c-border);border-radius:0;padding:8px 16px}
+[data-navpos="top"] .sidebar .nav-group{display:flex;align-items:center;gap:4px;margin:0 12px 0 0}
+[data-navpos="top"] .sidebar .nav-glabel{display:none}
+[data-navpos="top"] .topbar{grid-row:1}
+[data-navpos="top"] .main{grid-row:3}
+[data-navpos="top"] .opresult{grid-row:4}
+
+/* 底部胶囊导航（用户可选，配合任意主题） */
+[data-navpos="bottom"] .app{grid-template-columns:1fr;grid-template-rows:56px 1fr auto auto}
+[data-navpos="bottom"] .sidebar{grid-column:1;grid-row:4;position:static;width:auto;height:auto;flex-direction:row;justify-content:center;gap:6px;border-radius:var(--r-pill);margin:0 auto 12px;max-width:92vw;overflow-x:auto}
+[data-navpos="bottom"] .sidebar .nav-group{display:flex;gap:6px}
+[data-navpos="bottom"] .sidebar .nav-glabel{display:none}
+[data-navpos="bottom"] .topbar{grid-row:1}
+[data-navpos="bottom"] .main{grid-row:2}
+[data-navpos="bottom"] .opresult{grid-row:3}
+
+/* 全屏网格导航（用户可选） */
+[data-navpos="grid"] .sidebar{width:100%;height:auto;max-height:none}
+[data-navpos="grid"] .sidebar .nav-group{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px}
+
+/* ============================================================
+   二级调节（accent 12 预设由 JS 注入 --c-accent；此处留 6 个 CSS 兜底）
+   ============================================================ */
+[data-accent="orange"] { --c-accent:#FF8A3D; --c-accent-text:#1A0F06; }
 [data-accent="blue"]   { --c-accent:#5AA9E6; --c-accent-text:#04121E; }
 [data-accent="cyan"]   { --c-accent:#3FD0D6; --c-accent-text:#04201F; }
 [data-accent="purple"] { --c-accent:#A988F0; --c-accent-text:#150A2E; }
 [data-accent="green"]  { --c-accent:#5FD08A; --c-accent-text:#04210F; }
 [data-accent="rose"]   { --c-accent:#F07AA8; --c-accent-text:#2E0A18; }
-/* 亮度 3 档 */
-[data-bright="low"]  { filter:brightness(.86) contrast(1.02); }
-[data-bright="high"] { filter:brightness(1.12); }
-/* 动效减弱/遵循系统 */
-[data-motion="reduced"] *,*::before,*::after{ animation-duration:.001ms!important; transition-duration:100ms!important; }
+
+/* 亮度 5 档 */
+[data-bright="b1"] { filter:brightness(.82) contrast(1.02); }
+[data-bright="b2"] { filter:brightness(.92); }
+[data-bright="b3"] { filter:none; }
+[data-bright="b4"] { filter:brightness(1.08); }
+[data-bright="b5"] { filter:brightness(1.16); }
+/* 兼容旧值 */
+[data-bright="low"]{filter:brightness(.86) contrast(1.02)} [data-bright="high"]{filter:brightness(1.12)}
+
 /* 圆角 ±1 档 */
-[data-radius="minus"]{ --r-card:calc(var(--r-card) - 4px); --r-btn:calc(var(--r-btn) - 2px); }
+[data-radius="minus"]{ --r-card:max(2px,calc(var(--r-card) - 4px)); --r-btn:max(2px,calc(var(--r-btn) - 2px)); }
 [data-radius="plus"] { --r-card:calc(var(--r-card) + 4px); --r-btn:calc(var(--r-btn) + 2px); }
 /* 字阶 ±1 档 */
 [data-typescale="minus"]{ --f-display:calc(var(--f-display) - 4px); --f-title:calc(var(--f-title) - 2px); }
 [data-typescale="plus"] { --f-display:calc(var(--f-display) + 4px); --f-title:calc(var(--f-title) + 2px); }
-/* 主题专属开关：玻璃强度 / 噪点 */
-[data-noise="1"] body::before{ content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
-  opacity:.03; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+/* 主题专属开关：噪点（Pastel 自带，此处为其它主题开关） */
+[data-noise="1"]:not([data-theme="pastel-soft"]) body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.025;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+
+/* View Transitions：主题/路由交叉过渡，禁白闪 */
+::view-transition-old(root){animation:vt-out var(--d-medium) var(--e-standard) both}
+::view-transition-new(root){animation:vt-in var(--d-medium) var(--e-decel) both}
+@keyframes vt-out{to{opacity:0}}
+@keyframes vt-in{from{opacity:0;transform:translateY(4px)}}
+@media (prefers-reduced-motion: reduce){::view-transition-old(root),::view-transition-new(root){animation:none}}

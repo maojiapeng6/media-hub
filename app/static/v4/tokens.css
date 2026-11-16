@@ -1,10 +1,11 @@
 /* ============================================================
-   v4 Design Tokens — DTCG 风格集中化
+   v4.1 Design Tokens — DTCG 风格集中化
    组件内禁止写死颜色/圆角/阴影/动效时长，一律引用变量。
-   默认 = Obsidian Control（深色修复版）。各主题在 themes.css 覆盖。
+   默认 = Obsidian Control（深色修复版）。8 套主题在 themes.css 覆盖。
+   用户自定义色通过 JS 注入到 :root 的 --usr-* 变量，级联覆盖主题色。
    ============================================================ */
 :root {
-  /* —— 四级表面（禁止纯黑糊成一片） —— */
+  /* —— 四级表面（禁止纯黑糊成一片；近黑暖灰） —— */
   --surface-0: #08090A;   /* canvas 页面底 */
   --surface-1: #0F1011;   /* 卡片/导航容器 */
   --surface-2: #161718;   /* 抬升面板 */
@@ -24,6 +25,13 @@
   --c-accent-weak: rgba(255,138,61,.14);
   --c-accent-text: #1A0F06;
 
+  /* —— 用户二级调色钩子（JS 注入 --usr-* 即覆盖，空值不生效由 :root 默认承接） —— */
+  --usr-accent: ;
+  --usr-accent-text: ;
+  --usr-surface0: ; --usr-surface1: ; --usr-surface2: ; --usr-surface3: ;
+  --usr-border: ; --usr-text: ; --usr-text-dim: ;
+  --usr-ok: ; --usr-warn: ; --usr-err: ; --usr-info: ;
+
   /* 状态色（降饱和统一） */
   --c-ok: #46C98B;     --c-ok-bg: rgba(70,201,139,.14);
   --c-warn: #E8B339;   --c-warn-bg: rgba(232,179,57,.14);
@@ -31,11 +39,19 @@
   --c-info: #5AA9E6;   --c-info-bg: rgba(90,169,230,.14);
   --c-degrade: #E08A3C;--c-degrade-bg: rgba(224,138,60,.14);
 
+  /* 图表色板（暗色专用，不沿用浅色） */
+  --chart-1:#5AA9E6; --chart-2:#46C98B; --chart-3:#E8B339;
+  --chart-4:#A988F0; --chart-5:#F07AA8; --chart-6:#3FD0D6;
+  /* 灰阶基底 7 种（借鉴 shadcn 主题构建器） */
+  --neutral:#8A8F98; --zinc:#A1A1AA; --stone:#A8A29E;
+  --mauve:#9589A6; --olive:#9A9D84; --mist:#8FA3B0; --taupe:#A08C82;
+  --c-gray:var(--neutral);
+
   /* —— 间距阶梯（4px 基线） —— */
   --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px;
   --s-6: 24px; --s-8: 32px; --s-12: 48px; --s-24: 96px;
 
-  /* —— 圆角三档（Liquid Glass 例外由主题覆盖） —— */
+  /* —— 圆角三档（Liquid Glass/Pastel 例外由主题覆盖） —— */
   --r-card: 12px; --r-btn: 6px; --r-pill: 9999px;
 
   /* —— 字阶 —— */
@@ -52,21 +68,22 @@
   --sh-inset: inset 0 1px 0 rgba(255,255,255,.04);
   --sh-pop: 0 8px 32px rgba(0,0,0,.2);
 
-  /* —— 玻璃配方（渐进增强） —— */
+  /* —— 玻璃配方（渐进增强）：实色回退 + blur12 saturate180 + webkit 前缀 —— */
   --glass-bg: rgb(30 30 32 / .28);
   --glass-border: 1px solid rgb(255 255 255 / .25);
   --glass-radius: 20px;
   --glass-blur: blur(12px) saturate(180%);
+  --glass-strength: 1; /* 二级调节 0-2，作用于 saturate/blur */
 
   /* —— Motion Token（集中管理，组件禁止写死） —— */
-  --d-micro: 140ms;   --d-small: 180ms;  --d-medium: 300ms;
-  --d-page: 400ms;    --d-ceiling: 500ms; --d-stagger: 45ms;
+  --d-micro: 140ms; --d-small: 180ms;  --d-medium: 300ms;
+  --d-page: 400ms;  --d-ceiling: 500ms; --d-stagger: 45ms;
   --e-standard: cubic-bezier(.25,.46,.45,.94);
   --e-decel: cubic-bezier(.16,1,.3,1);
   --e-accel: cubic-bezier(.4,0,1,1);
 
   /* —— 密度（二级调节） —— */
-  --density: 1; /* 0.85 紧凑 / 1 舒适 / 1.15 宽松 */
+  --density: 1; /* 0.82 紧凑 / 1 舒适 / 1.15 宽松 */
   --card-pad: calc(16px * var(--density));
   --row-gap: calc(12px * var(--density));
 
@@ -76,6 +93,17 @@
 
   /* —— 焦点环 —— */
   --focus-ring: 0 0 0 2px var(--c-bg), 0 0 0 4px var(--c-accent);
+
+  /* —— 布局维度（随主题切换，十维之一） —— */
+  --nav-pos: left;        /* left | top | bottom | grid */
+  --app-cols: 220px 1fr;  /* 主网格列 */
+  --app-rows: 56px 1fr auto;
+  --card-span: 1;
+
+  /* —— 装饰开关 —— */
+  --glow: 0 0 0 rgba(0,0,0,0);
+  --scanline: 0;
+  --grid-bg: 0;
 
   /* —— 性能预算相关 —— */
   --clamp-w: 1400px;
@@ -87,7 +115,7 @@
 /* 焦点可见（键盘） */
 :focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--r-btn); }
 
-/* 玻璃工具类（内容层禁止用玻璃套玻璃） */
+/* 玻璃工具类（内容层禁止用玻璃套玻璃；实色回退→特性查询升级） */
 .glass {
   background: var(--glass-bg);
   border: var(--glass-border);
@@ -108,9 +136,17 @@
 .hairline-t{border-top:1px solid var(--c-border)}
 .hairline-b{border-bottom:1px solid var(--c-border)}
 
-/* 强调色唯一主行动 */
+/* 强调色唯一主行动 + 四态 */
 .btn-acc{background:var(--c-accent);color:var(--c-accent-text);border:none}
 .btn-acc:hover{filter:brightness(1.08)}
+.btn-acc:active{transform:scale(.98)}
+.btn-acc:disabled{opacity:.45;cursor:not-allowed;transform:none}
+
+/* 通用按钮四态（hover/press/focus/disabled） */
+.btn{transition:background var(--d-micro) var(--e-standard),transform var(--d-micro) var(--e-standard),box-shadow var(--d-micro) var(--e-standard),border-color var(--d-micro) var(--e-standard)}
+.btn:hover{filter:brightness(1.08);transform:translateY(-1px)}
+.btn:active{transform:scale(.98)}
+.btn:disabled{opacity:.45;cursor:not-allowed;transform:none}
 
 /* 状态三件套（颜色+图标+文字）基础 */
 .badge{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:var(--r-pill);font-size:12px;font-weight:540}
@@ -124,8 +160,11 @@
 @media (prefers-reduced-transparency: reduce) {
   .glass { background: var(--surface-2); border:1px solid var(--c-border-strong); -webkit-backdrop-filter:none; backdrop-filter:none; }
 }
+[data-glass="0"] .glass { background: var(--surface-2); border:1px solid var(--c-border-strong); -webkit-backdrop-filter:none; backdrop-filter:none; }
+
 /* 动效降级：位移缩放归零，仅保留 ≤100ms opacity */
 @media (prefers-reduced-motion: reduce) {
   *,*::before,*::after{ animation-duration:.001ms!important; animation-iteration-count:1!important;
-    transition-duration:100ms!important; scroll-behavior:auto!important; }
+    transition-duration:100ms!important; scroll-behavior:auto!important; transform:none!important; }
 }
+[data-motion="reduced"] *,*::before,*::after{ animation-duration:.001ms!important; transition-duration:100ms!important; transform:none!important; }
