@@ -28806,6 +28806,8 @@ class H(BaseHTTPRequestHandler):
         if p == '/api/embyfix/v3/scan':
             return self._j(embyfix_v3_scan(which=q1('which', 'emby'),
                                            library=q1('library', ''), tmdbid=q1('tmdbid', '')))
+        if p == '/api/embyfix/v3/monitor':
+            return self._j(tmdb_monitor_get())
 
         if p == '/api/embyfix/logs':
             return self._j(embyfix_logs(int(q1('limit', '60') or 60)))
@@ -29675,6 +29677,9 @@ class H(BaseHTTPRequestHandler):
                 max_items=(b.get('max_items') if b.get('max_items') is not None else 8),
                 days=(b.get('days') if b.get('days') is not None else 14),
                 dry_run=bool(b.get('dry_run'))))
+        # ★ V3 自动监控配置保存
+        if u.path == '/api/embyfix/v3/monitor/set':
+            return self._j(tmdb_monitor_set(b))
 
         if u.path.startswith('/api/mtbox/'):
             return self._j(mtbox_post(u.path, b))
@@ -34115,6 +34120,110 @@ def _ef3_write_nfo(base, field, tid, meta, show_meta):
 
 
 
+
+# ════════════════════════════════════════════════════════════════════════════
+# V3 · 媒体库自动监控补齐（用户 2026-11-18 点名：自动监控某个媒体库并补齐数据）
+#   设计：默认关闭(enabled=false)；用户选库+间隔+每批量；守护线程到点调 auto_repair(该库)。
+#   状态独立 JSON，不污染主 cfg；busy 锁防重入；任何异常只记状态、绝不影响主服务。
+# ════════════════════════════════════════════════════════════════════════════
+_TMDB_MON_PATH = '/dockroot/media-hub/tmdb_monitor.json'
+_TMDB_MON_DEF = {'enabled': False, 'which': 'emby', 'library': '', 'library_name': '',
+                 'interval': 21600, 'max_items': 8, 'days': 14,
+                 'last_run': 0, 'last_result': {}, 'run_count': 0}
+_TMDB_MON_ST = {'busy': False}
+_TMDB_MON_LOCK = __import__('threading').Lock()
+
+
+def _tmdb_monitor_state():
+    st = dict(_TMDB_MON_DEF)
+    try:
+        d = json.load(open(_TMDB_MON_PATH, encoding='utf-8'))
+        if isinstance(d, dict):
+            st.update(d)
+    except Exception:
+        pass
+    return st
+
+
+def _tmdb_monitor_save(st):
+    try:
+        tmp = _TMDB_MON_PATH + '.tmp'
+        json.dump(st, open(tmp, 'w', encoding='utf-8'), ensure_ascii=False, indent=2)
+        __import__('os').replace(tmp, _TMDB_MON_PATH)
+    except Exception:
+        pass
+
+
+def tmdb_monitor_get():
+    """读配置+运行状态+下次倒计时（前端轮询用）。"""
+    st = _tmdb_monitor_state()
+    out = {k: st.get(k) for k in _TMDB_MON_DEF}
+    out['ok'] = True
+    out['busy'] = bool(_TMDB_MON_ST.get('busy'))
+    last = int(st.get('last_run') or 0)
+    iv = max(300, int(st.get('interval') or 21600))
+    out['next_in'] = (max(0, iv - (int(_ef2_time.time()) - last))
+                      if st.get('enabled') and last else (iv if st.get('enabled') else -1))
+    return out
+
+
+def tmdb_monitor_set(cfg_in):
+    """保存配置（只白名单字段；enabled/library/interval/max_items/days/which/library_name）。"""
+    st = _tmdb_monitor_state()
+    for k in ('enabled', 'which', 'library', 'library_name', 'interval', 'max_items', 'days'):
+        if k in (cfg_in or {}):
+            st[k] = cfg_in[k]
+    try:
+        st['enabled'] = bool(st.get('enabled'))
+        st['interval'] = max(300, min(604800, int(st.get('interval') or 21600)))
+        st['max_items'] = max(1, min(40, int(st.get('max_items') or 8)))
+        st['days'] = max(0, int(st.get('days') or 14))
+    except Exception:
+        pass
+    _tmdb_monitor_save(st)
+    return tmdb_monitor_get()
+
+
+def _tmdb_monitor_loop():
+    """守护线程：每 60s 醒一次，到点补一批（默认关闭）。"""
+    _ef2_time.sleep(120)   # 启动后等 2 分钟，别跟预热/批处理抢资源
+    while True:
+        try:
+            st = _tmdb_monitor_state()
+            if st.get('enabled') and not _TMDB_MON_ST.get('busy'):
+                last = int(st.get('last_run') or 0)
+                iv = max(300, int(st.get('interval') or 21600))
+                if (_ef2_time.time() - last) >= iv:
+                    with _TMDB_MON_LOCK:
+                        _TMDB_MON_ST['busy'] = True
+                    try:
+                        r = embyfix_v3_auto_repair(
+                            which=st.get('which') or 'emby',
+                            library=st.get('library') or '',
+                            max_items=st.get('max_items') or 8,
+                            days=int(st.get('days') or 0))
+                        st['last_result'] = {'ok': bool(r.get('ok')),
+                                             'scanned': r.get('scanned'), 'broken': r.get('broken'),
+                                             'processed': r.get('processed'), 'succeeded': r.get('succeeded'),
+                                             'secs': r.get('secs'), 'ts': int(_ef2_time.time())}
+                    except Exception as ex:
+                        st['last_result'] = {'ok': False, 'err': str(ex)[:160], 'ts': int(_ef2_time.time())}
+                    st['last_run'] = int(_ef2_time.time())
+                    st['run_count'] = int(st.get('run_count') or 0) + 1
+                    _tmdb_monitor_save(st)
+                    try:
+                        _ef2_log('tmdb_monitor', st.get('which') or 'emby', True,
+                                 '自动监控跑批: %s' % str(st.get('last_result'))[:140])
+                    except Exception:
+                        pass
+                    with _TMDB_MON_LOCK:
+                        _TMDB_MON_ST['busy'] = False
+        except Exception:
+            with _TMDB_MON_LOCK:
+                _TMDB_MON_ST['busy'] = False
+        _ef2_time.sleep(60)
+
+
 def embyfix_v3_auto_repair(which='emby', library='', max_items=8, days=14, dry_run=False):
     """批量自动补缺：scan 找缺口 → 逐剧全字段 repair。供定时任务调用。
        max_items: 单次最多修几部（默认8，避免长时间占满 worker）；
@@ -35226,6 +35335,11 @@ if __name__ == '__main__':
     #   然后也可以让它自动的去补齐」）—— 后端这一层必须有，
     #   否则前端开关只是个摆设，关掉页面就没了。
     threading.Thread(target=_gap_sched_loop, daemon=True).start()
+    # ★ V3 自动监控守护线程（函数已在上方定义，安全）
+    try:
+        threading.Thread(target=_tmdb_monitor_loop, daemon=True).start()
+    except Exception as _me:
+        pass
     threading.Thread(target=q2f_loop, daemon=True).start()
 
     ThreadingHTTPServer(('0.0.0.0', PORT), H).serve_forever()

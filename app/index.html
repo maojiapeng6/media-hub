@@ -16174,7 +16174,19 @@ async function ef2ViewTmdb(b){
    '<button class="btn sm" id="ef3_stopbtn" style="display:none" onclick="EF3_STOP=true">⏹ 停止</button>'+
    '<span id="ef3_hint" class="sub"></span></div>'+
    '<div id="ef3_progress"></div>'+
-   '<div id="ef3_probe"></div><div id="ef3_rows"><span class="sub">点「扫描缺失元数据」开始…</span></div></div>';
+   '<div id="ef3_probe"></div><div id="ef3_rows"><span class="sub">点「扫描缺失元数据」开始…</span></div>'+
+   '<div class="card" id="ef3_moncard" style="margin-top:14px;border:1px solid #374151">'+
+   '<h4 style="margin:0 0 10px;font-size:14px">⏰ 自动监控媒体库 <span class="sub" style="font-weight:400">选定媒体库后按间隔自动补齐缺失元数据（默认关闭）</span></h4>'+
+   '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+
+   '<label class="sub">媒体库</label><select id="ef3_mon_lib" class="e2-arg" style="width:210px"><option value="">加载中…</option></select>'+
+   '<label class="sub">间隔</label><select id="ef3_mon_iv" class="e2-arg" style="width:110px">'+
+   '<option value="3600">1 小时</option><option value="21600">6 小时</option><option value="43200">12 小时</option><option value="86400">24 小时</option></select>'+
+   '<label class="sub">每批</label><input id="ef3_mon_batch" class="e2-arg" value="8" style="width:56px" title="每次最多修几部(1-40)">'+
+   '<label class="sub">天数</label><input id="ef3_mon_days" class="e2-arg" value="14" style="width:56px" title="0=全库含存量,14=仅近14天">'+
+   '<label class="sub"><input type="checkbox" id="ef3_mon_en"> 启用</label>'+
+   '<button class="btn sm acc" onclick="ef3SaveMon()">保存设置</button>'+
+   '</div><div id="ef3_mon_status" class="sub" style="margin-top:8px">读取配置中…</div></div></div>';
+  setTimeout(ef3LoadMon, 0);
 }
 async function ef3Probe(){
   const box=document.getElementById('ef3_probe');
@@ -16267,7 +16279,70 @@ async function ef3AutoAll(){
   batch();
 }
 
-/* ── Tab6 操作历史 ── */
+/* ── 自动监控媒体库 ── */
+let EF3_MON_TIMER=null;
+async function ef3LoadLibs(){
+  const sel=document.getElementById('ef3_mon_lib');
+  try{
+    const d=await apiGet('/api/gap/libviews',15000);
+    const views=(d&&d.views)||[];
+    if(sel&&views.length){
+      sel.innerHTML='<option value="">全部剧集库</option>'+views.map(function(v){
+        return '<option value="'+esc(v.id)+'">'+esc(v.name)+' ('+esc(v.type_cn||v.type||'')+')</option>';}).join('');
+    }
+  }catch(e){ if(sel)sel.innerHTML='<option value="">全部剧集库(列表加载失败)</option>'; }
+}
+function ef3FmtAgo(ts){
+  if(!ts)return '从未运行';
+  const s=Math.max(0,Math.floor(Date.now()/1000-ts));
+  if(s<60)return s+' 秒前'; if(s<3600)return Math.floor(s/60)+' 分钟前';
+  if(s<86400)return Math.floor(s/3600)+' 小时前'; return Math.floor(s/86400)+' 天前';
+}
+async function ef3LoadMon(){
+  await ef3LoadLibs();
+  try{
+    const d=await apiGet('/api/embyfix/v3/monitor',15000);
+    const set=function(id,v){const e=document.getElementById(id);if(e)e.value=v;};
+    set('ef3_mon_lib',d.library||''); set('ef3_mon_iv',String(d.interval||21600));
+    set('ef3_mon_batch',d.max_items!=null?d.max_items:8); set('ef3_mon_days',d.days!=null?d.days:14);
+    const en=document.getElementById('ef3_mon_en'); if(en)en.checked=!!d.enabled;
+    const lr=d.last_result||{};
+    const st=document.getElementById('ef3_mon_status');
+    if(st){
+      st.innerHTML='状态：<b style="color:'+(d.enabled?'#34d399':'#9ca3af')+'">'+(d.enabled?'已启用':'已关闭')+'</b>'+
+        ' · 库：'+esc(d.library_name||'全部剧集库')+' · 间隔 '+Math.round((d.interval||21600)/3600)+'h'+
+        '<div class="e2-sub2">已运行 '+(d.run_count||0)+' 次 · 上次 '+ef3FmtAgo(d.last_run)+
+        (lr.ok!==undefined?(' · 上次结果 '+(lr.ok?'成功':'失败')+'：扫 '+(lr.scanned||0)+'/缺 '+(lr.broken||0)+'/修 '+(lr.processed||0)+'/成 '+(lr.succeeded||0)+(lr.err?' · '+esc(lr.err):'')):'')+
+        (d.next_in>=0?(' · 下次约 '+Math.ceil(d.next_in/60)+' 分钟后'):'')+(d.busy?' · <span style="color:#fbbf24">正在补…</span>':'')+'</div>';
+    }
+    if(EF3_MON_TIMER)clearInterval(EF3_MON_TIMER);
+    EF3_MON_TIMER=setInterval(ef3LoadMon,30000);
+  }catch(e){const st=document.getElementById('ef3_mon_status');if(st)st.innerHTML='<span class="tag bad">读取失败：'+esc(e)+'</span>';}
+}
+async function ef3SaveMon(){
+  const val=function(id){const e=document.getElementById(id);return e?e.value:'';};
+  const sel=document.getElementById('ef3_mon_lib');
+  const opt=sel&&sel.selectedOptions&&sel.selectedOptions[0];
+  const en=document.getElementById('ef3_mon_en');
+  const payload={
+    enabled: !!(en&&en.checked),
+    which: EF2_WHICH||'emby',
+    library: val('ef3_mon_lib')||'',
+    library_name: opt?opt.text:'全部剧集库',
+    interval: parseInt(val('ef3_mon_iv'))||21600,
+    max_items: parseInt(val('ef3_mon_batch'))||8,
+    days: parseInt(val('ef3_mon_days'))||0
+  };
+  const st=document.getElementById('ef3_mon_status');
+  if(st)st.innerHTML='保存中…';
+  try{
+    await apiPost('/api/embyfix/v3/monitor/set',payload);
+    await ef3LoadMon();
+    if(st)st.innerHTML+=' <span class="tag ok">已保存</span>';
+  }catch(e){if(st)st.innerHTML='<span class="tag bad">保存失败：'+esc(e)+'</span>';}
+}
+
+/* ── Tab6 操作历史 ──*/
 function ef2ViewOps(b){
   b.innerHTML='<div class="card"><h3 style="margin:0 0 10px">📜 操作历史 <span class="sub" style="font-weight:400">所有修复/刷新/扫描动作的时间、实例、结果与耗时</span></h3>'+
    '<div id="e2_ops"><span class="sub">加载中…</span></div></div>';
