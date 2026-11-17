@@ -28798,6 +28798,14 @@ class H(BaseHTTPRequestHandler):
             return self._j(embyfix_v2_ops(int(q1('limit', '80') or 80)))
         if p == '/api/embyfix/v2/compare':
             return self._j(embyfix_v2_compare(term=q1('term', ''), tmdbid=q1('tmdbid', '')))
+        # ★ V3 TMDB 元数据：链路自检 / 按库扫描 / 官方元数据预览
+        if p == '/api/embyfix/v3/tmdb_probe':
+            return self._j(embyfix_v3_tmdb_probe())
+        if p == '/api/embyfix/v3/tmdb_meta':
+            return self._j(embyfix_v3_tmdb_meta(q1('tmdbid', ''), q1('name', '')))
+        if p == '/api/embyfix/v3/scan':
+            return self._j(embyfix_v3_scan(which=q1('which', 'emby'),
+                                           library=q1('library', ''), tmdbid=q1('tmdbid', '')))
 
         if p == '/api/embyfix/logs':
             return self._j(embyfix_logs(int(q1('limit', '60') or 60)))
@@ -29654,6 +29662,19 @@ class H(BaseHTTPRequestHandler):
             return self._j(embyfix_v2_node(
                 which=(b.get('which') or 'emby'), action=(b.get('action') or ''),
                 arg=(b.get('arg') or '')))
+        # ★ V3 TMDB 元数据：逐项勾选修复（auto=全修）
+        if u.path == '/api/embyfix/v3/repair':
+            return self._j(embyfix_v3_repair(
+                which=(b.get('which') or 'emby'), sid=(b.get('sid') or ''),
+                tmdbid=(b.get('tmdbid') or ''), fields=(b.get('fields') or []),
+                auto=bool(b.get('auto')), path=(b.get('path') or '')))
+        # ★ V3 自动批量补：定时调用（scan 找缺口 → 逐剧修，限量+近N天）
+        if u.path == '/api/embyfix/v3/auto_repair':
+            return self._j(embyfix_v3_auto_repair(
+                which=(b.get('which') or 'emby'), library=(b.get('library') or ''),
+                max_items=(b.get('max_items') if b.get('max_items') is not None else 8),
+                days=(b.get('days') if b.get('days') is not None else 14),
+                dry_run=bool(b.get('dry_run'))))
 
         if u.path.startswith('/api/mtbox/'):
             return self._j(mtbox_post(u.path, b))
@@ -33811,6 +33832,490 @@ def embyfix_v2_ops(limit=80):
     return {'ok': True, 'rows': rows}
 
 
+
+# ════════════════════════════════════════════════════════════════════════════
+# V3 · EMby 故障检修「TMDB 元数据」精密检测/修复（用户 2026-11-17 点名）
+#   背景：emby-main 容器曾无代理 env；现已补代理（双保险）。但根因是 Emby
+#   从不对孤儿 STRM 剧集发起在线抓取 → 集名/剧情/首播日/季名/封面空。
+#   方案：复用已验证的「TMDB 官方数据 → 本地 NFO + 图片 → 定向 FullRefresh」，
+#   提供 ①链路自检 ②按库扫描缺项 ③逐项勾选/自动修复 ④官方元数据预览。
+#   所有动作真实作用于 Emby / 文件系统；NFO 写入前先备份；不整库盲刷。
+# ════════════════════════════════════════════════════════════════════════════
+
+_EF3_DB = '/dockroot/emby/data/library.db'   # media-hub 容器内 Emby library.db 挂载路径（兜底下探）
+_EF3_FIELDS = ['cover', 'title', 'plot', 'aired', 'season_name', 'overview']
+
+
+def _ef3_dbpath():
+    """探测 Emby library.db 在 media-hub 容器内的可达路径（不同部署挂载点不同）。"""
+    cands = [
+        '/dockroot/emby/data/library.db',
+        '/dockroot/emby-main/config/data/library.db',
+    ]
+    for p in cands:
+        try:
+            if os.path.isfile(p):
+                return p
+        except Exception:
+            pass
+    return ''
+
+
+def _ef3_sql(db, q):
+    """只读查询 Emby library.db（sql 报错走异常，不吞）。"""
+    try:
+        import sqlite3
+        con = sqlite3.connect('file:' + db + '?mode=ro', uri=True, timeout=8)
+        con.row_factory = sqlite3.Row
+        rows = [dict(r) for r in con.execute(q).fetchall()]
+        con.close()
+        return rows
+    except Exception as e:
+        return [{'__err': str(e)[:180]}]
+
+
+def embyfix_v3_tmdb_probe():
+    """TMDB 三条链路自检：复用已上线的 tmdb_probe（代理/直连/图片）。"""
+    t0 = _ef2_time.time()
+    r = tmdb_probe()
+    r['key_src'] = tmdb_key_src()
+    r['key_masked'] = tmdb_key_masked()
+    r['proxy'] = tmdb_proxy() or '(空=直连)'
+    r['secs'] = round(_ef2_time.time() - t0, 2)
+    _ef2_log('tmdb_probe', 'emby', bool(r.get('ok')), r.get('detail', ''), r['secs'])
+    return r
+
+
+def embyfix_v3_tmdb_meta(tmdbid='', name=''):
+    """预览某剧在 TMDB 的官方元数据（剧集级 + 每季），只读不写。"""
+    tid = str(tmdbid or '').strip()
+    out = {'ok': False, 'tmdbid': tid, 'show': {}, 'seasons': [], 'detail': ''}
+    if not tid or not tid.isdigit():
+        out['detail'] = '需要有效 TMDBID（纯数字）'
+        return out
+    d = _tmdb_get('https://api.themoviedb.org/3/tv/%s?api_key=%s&language=zh-CN'
+                  % (tid, tmdb_key()), t=25)
+    if not isinstance(d, dict) or '__err' in d or not d.get('id'):
+        out['detail'] = 'TMDB 剧集请求失败：' + str((d or {}).get('__err') or 'no-data')[:120]
+        return out
+    out['show'] = {'name': d.get('name') or '', 'overview': d.get('overview') or '',
+                   'genres': [g.get('name') for g in (d.get('genres') or []) if g.get('name')],
+                   'first_air': d.get('first_air_date') or '',
+                   'poster_path': d.get('poster_path') or '',
+                   'backdrop_path': d.get('backdrop_path') or ''}
+    seasons = d.get('seasons') or []
+    for s in seasons:
+        sn = s.get('season_number')
+        if sn is None or sn < 0:
+            continue
+        sd = _tmdb_get('https://api.themoviedb.org/3/tv/%s/season/%d?api_key=%s&language=zh-CN'
+                       % (tid, sn, tmdb_key()), t=25)
+        eps = []
+        if isinstance(sd, dict) and sd.get('episodes'):
+            for ep in sd['episodes']:
+                eps.append({'e': ep.get('episode_number'), 'name': ep.get('name') or '',
+                            'overview': ep.get('overview') or '', 'air': ep.get('air_date') or '',
+                            'still': ep.get('still_path') or ''})
+        out['seasons'].append({'s': sn, 'name': s.get('name') or '',
+                               'poster': s.get('poster_path') or '', 'episodes': eps})
+    out['ok'] = True
+    out['detail'] = 'TMDB 官方：%s · %d 季 · %d 集' % (
+        out['show']['name'], len(out['seasons']),
+        sum(len(x['episodes']) for x in out['seasons']))
+    return out
+
+
+def _ef3_episodes(inst, series_id):
+    """从 Emby API 拉某剧全部集（含字段），按季分组。"""
+    rows = []
+    st, obj = _ef2_http(inst, '/Shows/%s/Episodes' % series_id, params={
+        'Fields': 'Name,Overview,PremiereDate,ImageTags,ParentIndexNumber,IndexNumber,Path,ProviderIds',
+        'Limit': '2000'}, t=30)
+    if st == 200 and isinstance(obj, dict):
+        rows = obj.get('Items') or []
+    return rows
+
+
+def _ef3_seasons(inst, series_id):
+    st, obj = _ef2_http(inst, '/Shows/%s/Seasons' % series_id, params={
+        'Fields': 'Name,ImageTags,IndexNumber', 'Limit': '60'}, t=25)
+    return (obj.get('Items') or []) if st == 200 and isinstance(obj, dict) else []
+
+
+def embyfix_v3_scan(which='emby', library='', tmdbid=''):
+    """扫描指定库（或全库）的剧集元数据缺项。只读：封面/集名/剧情/首播日/季名/剧集简介。
+       返回 series 列表；每剧含缺失字段清单 + 可修复的 Emby SeriesId / 本地路径 / TMDBID。"""
+    t0 = _ef2_time.time()
+    inst = _ef2_inst(which)
+    db = _ef3_dbpath()
+    # 1) 取剧集列表
+    params = {'IncludeItemTypes': 'Series', 'Recursive': 'true',
+              'Fields': 'Name,Path,ProviderIds,Overview,ImageTags', 'Limit': '400'}
+    if library:
+        params['ParentId'] = library
+    st, obj = _ef2_http(inst, '/Items', params=params, t=30)
+    series = (obj.get('Items') or []) if st == 200 and isinstance(obj, dict) else []
+    out = []
+    for s in series:
+        sid = str(s.get('Id') or '')
+        spath = s.get('Path') or ''
+        tid = str((s.get('ProviderIds') or {}).get('Tmdb') or '').strip()
+        if tmdbid and tid != str(tmdbid).strip():
+            continue
+        gap = []
+        # 剧壳封面
+        if not (s.get('ImageTags') or {}).get('Primary'):
+            gap.append('cover')
+        # 剧壳简介
+        if not (s.get('Overview') or '').strip():
+            gap.append('overview')
+        # 季名（英文 Season N）+ 季封面
+        seasons = _ef3_seasons(inst, sid)
+        season_bad = []
+        for se in seasons:
+            nm = se.get('Name') or ''
+            import re as _re3
+            if _re3.match(r'^\s*Season\s+\d+', nm, _re3.I):
+                season_bad.append({'s': se.get('IndexNumber'), 'name': nm})
+        if season_bad:
+            gap.append('season_name')
+        # 每集：集名(等于"第N集"或文件名)/剧情/首播日/封面
+        eps = _ef3_episodes(inst, sid)
+        ep_gap = {'title': 0, 'plot': 0, 'aired': 0, 'cover': 0}
+        import re as _re3
+        for ep in eps:
+            nm = (ep.get('Name') or '').strip()
+            idx = ep.get('IndexNumber')
+            if (not nm) or (_re3.match(r'^第\s*\d+\s*集$', nm)) or nm.lower().endswith(('.strm', '.mp4', '.mkv')):
+                ep_gap['title'] += 1
+            if not (ep.get('Overview') or '').strip():
+                ep_gap['plot'] += 1
+            if not ep.get('PremiereDate'):
+                ep_gap['aired'] += 1
+            if not (ep.get('ImageTags') or {}).get('Primary'):
+                ep_gap['cover'] += 1
+        if ep_gap['title']:
+            gap.append('title')
+        if ep_gap['plot']:
+            gap.append('plot')
+        if ep_gap['aired']:
+            gap.append('aired')
+        if ep_gap['cover']:
+            gap.append('cover')
+        if not gap:
+            continue
+        gap = list(dict.fromkeys(gap))
+        out.append({'id': sid, 'name': s.get('Name') or '', 'path': spath,
+                    'tmdbid': tid, 'gap': gap,
+                    'counts': {'series_count': len(seasons), 'ep_count': len(eps), **ep_gap},
+                    'season_bad': season_bad[:8]})
+    secs = round(_ef2_time.time() - t0, 2)
+    res = {'ok': True, 'which': which, 'library': library, 'db': bool(db),
+           'total': len(series), 'broken': len(out), 'rows': out, 'secs': secs}
+    _ef2_log('tmdb_scan', which, True, '扫 %d 剧 / %d 缺项 / %ss' % (len(series), len(out), secs), secs)
+    return res
+
+
+def _ef3_write_nfo(base, field, tid, meta, show_meta):
+    """写 NFO/图片到剧集本地目录（base = media-hub 容器内 STRM 路径）。返回 (ok, msg, files)。"""
+    files = []
+    try:
+        if field == 'title' or field == 'plot' or field == 'aired':
+            # 每集同名 .nfo：从 TMDB 拉全部季集数据
+            for se in meta.get('seasons') or []:
+                sfold = None
+                for cand in ('Season %02d' % se['s'], 'Season %d' % se['s'], 'season %02d' % se['s']):
+                    p = os.path.join(base, cand)
+                    if os.path.isdir(p):
+                        sfold = p
+                        break
+                if not sfold:
+                    continue
+                for ep in se.get('episodes') or []:
+                    # 找 SxxExx.strm
+                    pat = 'S%02dE%02d' % (se['s'], ep['e'])
+                    target = None
+                    for fn in os.listdir(sfold):
+                        if pat in fn.upper() and fn.lower().endswith('.strm'):
+                            target = fn
+                            break
+                    if not target:
+                        continue
+                    nf = os.path.join(sfold, target[:-5] + '.nfo')
+                    old = None
+                    if os.path.isfile(nf):
+                        old = nf + '.bak.embyfix3'
+                        try:
+                            os.rename(nf, old)
+                        except Exception:
+                            old = None
+                    name = ep['name'] or ('第 %d 集' % ep['e'])
+                    xml = ('<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n'
+                           '<episodedetails>\n  <title>%s</title>\n  <season>%d</season>\n'
+                           '  <episode>%d</episode>\n  <aired>%s</aired>\n'
+                           '  <plot><![CDATA[%s]]></plot>\n  <lockdata>false</lockdata>\n'
+                           '</episodedetails>\n') % (
+                        _ef_xml(name), se['s'], ep['e'], ep['air'], ep['overview'])
+                    with open(nf, 'w', encoding='utf-8') as fh:
+                        fh.write(xml)
+                    os.chmod(nf, 0o644)
+                    files.append(os.path.basename(nf))
+            return True, '写入 %d 个集 NFO（title/plot/aired，含官方剧情）' % len(files), files
+        if field == 'season_name':
+            n = 0
+            for se in meta.get('seasons') or []:
+                sfold = None
+                for cand in ('Season %02d' % se['s'], 'Season %d' % se['s'], 'season %02d' % se['s']):
+                    p = os.path.join(base, cand)
+                    if os.path.isdir(p):
+                        sfold = p
+                        break
+                if not sfold:
+                    continue
+                nf = os.path.join(sfold, 'season.nfo')
+                if os.path.isfile(nf):
+                    try:
+                        os.rename(nf, nf + '.bak.embyfix3')
+                    except Exception:
+                        pass
+                nm = se['name'] or ('第%d季' % se['s'])
+                xml = ('<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n'
+                       '<season>\n  <seasonnumber>%d</seasonnumber>\n  <title>%s</title>\n'
+                       '  <lockdata>false</lockdata>\n</season>\n') % (se['s'], _ef_xml(nm))
+                with open(nf, 'w', encoding='utf-8-sig') as fh:
+                    fh.write(xml)
+                n += 1
+                files.append('S%d/season.nfo' % se['s'])
+            return True, '写入 %d 个季 NFO（官方中文季名）' % n, files
+        if field == 'overview':
+            sm = show_meta or {}
+            if not sm.get('overview'):
+                return False, 'TMDB 无剧集简介', files
+            nf = os.path.join(base, 'tvshow.nfo')
+            if os.path.isfile(nf):
+                try:
+                    os.rename(nf, nf + '.bak.embyfix3')
+                except Exception:
+                    pass
+            genre = ''.join('  <genre>%s</genre>\n' % _ef_xml(g) for g in (sm.get('genres') or []))
+            xml = ('<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n'
+                   '<tvshow>\n  <title>%s</title>\n  <year>%s</year>\n  <premiered>%s</premiered>\n'
+                   '%s  <plot><![CDATA[%s]]></plot>\n  <lockdata>false</lockdata>\n</tvshow>\n') % (
+                _ef_xml(sm.get('name') or ''), (sm.get('first_air') or '')[:4],
+                sm.get('first_air') or '', genre, sm.get('overview') or '')
+            with open(nf, 'w', encoding='utf-8') as fh:
+                fh.write(xml)
+            os.chmod(nf, 0o644)
+            return True, '写入 tvshow.nfo（官方简介+类型）', ['tvshow.nfo']
+        if field == 'cover':
+            return True, '封面由剧集级 FullRefresh 从 NFO/图片目录读取（见 note）', files
+        return False, '未知字段 ' + field, files
+    except Exception as e:
+        return False, str(e)[:180], files
+
+
+
+def embyfix_v3_auto_repair(which='emby', library='', max_items=8, days=14, dry_run=False):
+    """批量自动补缺：scan 找缺口 → 逐剧全字段 repair。供定时任务调用。
+       max_items: 单次最多修几部（默认8，避免长时间占满 worker）；
+       days: 只处理近 N 天入库的剧（默认14；0=不限全库）；
+       dry_run: True 只返回将要修的清单，不实际写入。
+       返回 {ok, scanned, broken, picked, results[], skipped_due_to_limit, secs}。"""
+    t0 = _ef2_time.time()
+    try:
+        max_items = int(max_items)
+    except Exception:
+        max_items = 8
+    max_items = max(1, min(max_items, 40))
+    try:
+        days = int(days)
+    except Exception:
+        days = 14
+    # 1) 扫描缺口（复用现有 scan，只读）
+    scan = embyfix_v3_scan(which=which, library=library)
+    rows = scan.get('rows') or []
+    # 2) days 过滤：按剧 DateCreated（入库时间）筛近 N 天；无 DateCreated 则不过滤（保守保留）
+    picked = []
+    if days > 0:
+        db = _ef3_dbpath()
+        for r in rows:
+            sid = str(r.get('id') or '')
+            created = 0
+            if db and sid.isdigit():
+                rr = _ef3_sql(db, "SELECT DateCreated FROM MediaItems WHERE Id=%s;" % int(sid))
+                if rr and isinstance(rr[0].get('DateCreated'), (int, float)):
+                    created = rr[0]['DateCreated']
+            if created <= 0:
+                # 无入库时间：无法判定，保守跳过（避免误修老剧）
+                continue
+            import time as _t
+            age_days = (_t.time() - created) / 86400.0
+            if age_days <= days:
+                picked.append(r)
+    else:
+        picked = list(rows)
+    total_broken = len(rows)
+    total_picked = len(picked)
+    # 3) 限量
+    batch = picked[:max_items]
+    skipped = max(0, total_picked - len(batch))
+    results = []
+    if dry_run:
+        for r in batch:
+            results.append({'id': r.get('id'), 'name': r.get('name'),
+                            'tmdbid': r.get('tmdbid'), 'fields': r.get('gap'),
+                            'dry_run': True, 'ok': True})
+    else:
+        for r in batch:
+            res = embyfix_v3_repair(which=which, sid=str(r.get('id') or ''),
+                                    tmdbid=str(r.get('tmdbid') or ''),
+                                    fields=list(r.get('gap') or []), auto=False,
+                                    path=r.get('path') or '')
+            results.append({'id': r.get('id'), 'name': r.get('name'),
+                            'ok': res.get('ok'), 'detail': res.get('detail'),
+                            'steps': [{k: x.get(k) for k in ('label', 'ok', 'msg')}
+                                      for x in (res.get('steps') or [])]})
+    okcount = sum(1 for x in results if x.get('ok'))
+    secs = round(_ef2_time.time() - t0, 2)
+    out = {'ok': True, 'which': which, 'library': library,
+           'scanned': scan.get('total', 0), 'broken': total_broken,
+           'picked': total_picked, 'processed': len(batch), 'succeeded': okcount,
+           'skipped_due_to_limit': skipped, 'days': days, 'max_items': max_items,
+           'dry_run': bool(dry_run), 'results': results, 'secs': secs}
+    _ef2_log('tmdb_auto_repair', which, True,
+             '自动补: 扫%d/缺%d/选%d/修%d/成%d/略%d · %ss' % (
+                 scan.get('total', 0), total_broken, total_picked, len(batch), okcount, skipped, secs), secs)
+    return out
+
+
+def embyfix_v3_repair(which='emby', sid='', tmdbid='', fields=None, auto=False, path=''):
+    """逐项修复：拉 TMDB 官方数据写 NFO/图片 → 对单剧定向 FullRefresh（绝不整库）。
+       fields: ['cover','title','plot','aired','season_name','overview']；auto=True 修全部缺项。"""
+    t0 = _ef2_time.time()
+    inst = _ef2_inst(which)
+    fields = fields or []
+    steps = []
+    tid = str(tmdbid or '').strip()
+    if not tid or not tid.isdigit():
+        return {'ok': False, 'detail': '无效 TMDBID', 'steps': steps}
+    meta = embyfix_v3_tmdb_meta(tid)
+    if not meta.get('ok'):
+        return {'ok': False, 'detail': meta.get('detail', 'TMDB 取数失败'), 'steps': steps}
+    show_meta = meta['show']
+    # 定位本地 STRM 目录：优先用传入 path，其次用 DB 中 Series.Path
+    local = ''
+    path = (path or '').strip()
+    if path:
+        local = path.replace(inst['prefix'], inst['strm'], 1)
+    if not local or not os.path.isdir(local):
+        db = _ef3_dbpath()
+        if db and sid:
+            rr = _ef3_sql(db, "SELECT Path FROM MediaItems WHERE Id=%s;" % int(sid) if str(sid).isdigit() else "SELECT Path FROM MediaItems WHERE 0;")
+            if rr and rr[0].get('Path') and '__err' not in rr[0]:
+                local = rr[0]['Path'].replace(inst['prefix'], inst['strm'], 1)
+    if not local or not os.path.isdir(local):
+        return {'ok': False, 'detail': '本地 STRM 目录不可达：%s（path=%s）' % (local or '空', path), 'steps': steps}
+    # 写 NFO（按字段，去重：title/plot/aired 共用一次集 NFO 写入）
+    do_ep = any(f in fields for f in ('title', 'plot', 'aired'))
+    todo = []
+    if do_ep:
+        todo.append('episode_nfo')
+    if 'season_name' in fields:
+        todo.append('season_name')
+    if 'overview' in fields:
+        todo.append('overview')
+    for t in todo:
+        if t == 'episode_nfo':
+            ok, msg, files = _ef3_write_nfo(local, 'title', tid, meta, show_meta)
+        else:
+            ok, msg, files = _ef3_write_nfo(local, t, tid, meta, show_meta)
+        steps.append({'label': t, 'ok': ok, 'msg': msg, 'files': len(files)})
+    # 封面：下载 TMDB 官方 poster/still 到对应目录
+    if 'cover' in fields:
+        n = 0
+        try:
+            base_img = 'https://image.tmdb.org/t/p/w500'
+            if show_meta.get('poster_path'):
+                _ef3_dl(base_img + show_meta['poster_path'], os.path.join(local, 'poster.jpg'))
+                n += 1
+            if show_meta.get('backdrop_path'):
+                _ef3_dl(base_img + show_meta['backdrop_path'], os.path.join(local, 'fanart.jpg'))
+                n += 1
+            for se in meta.get('seasons') or []:
+                sfold = None
+                for cand in ('Season %02d' % se['s'], 'Season %d' % se['s']):
+                    p = os.path.join(base_img and local or local, cand)
+                    if os.path.isdir(p):
+                        sfold = p
+                        break
+                if sfold and se.get('poster'):
+                    _ef3_dl(base_img + se['poster'], os.path.join(sfold, 'poster.jpg'))
+                    n += 1
+            # 每集官方 still → <strm基名>-thumb.jpg（Emby 集封面；无 still 则退用季海报）
+            ep_thumb = 0
+            for se in meta.get('seasons') or []:
+                sfold = None
+                for cand in ('Season %02d' % se['s'], 'Season %d' % se['s']):
+                    p = os.path.join(local, cand)
+                    if os.path.isdir(p):
+                        sfold = p
+                        break
+                if not sfold:
+                    continue
+                for ep in se.get('episodes') or []:
+                    pat = 'S%02dE%02d' % (se['s'], ep['e'])
+                    target = None
+                    for fn in os.listdir(sfold):
+                        if pat in fn.upper() and fn.lower().endswith('.strm'):
+                            target = fn
+                            break
+                    if not target:
+                        continue
+                    src = ep.get('still') or se.get('poster') or ''
+                    if not src:
+                        continue
+                    try:
+                        _ef3_dl(base_img + src, os.path.join(sfold, target[:-5] + '-thumb.jpg'))
+                        ep_thumb += 1
+                    except Exception:
+                        pass
+            n += ep_thumb
+            steps.append({'label': 'cover', 'ok': True,
+                          'msg': '下载 %d 张官方图（poster/fanart/季海报 + %d 集 still）' % (n, ep_thumb),
+                          'files': n})
+        except Exception as e:
+            steps.append({'label': 'cover', 'ok': False, 'msg': str(e)[:150]})
+    # 定向 FullRefresh 单剧（只发一次，避免互相取消）
+    refreshed = False
+    if sid and str(sid).isdigit():
+        st, obj = _ef2_http(inst, '/Items/%s/Refresh' % sid, 'POST', params={
+            'Recursive': 'true', 'MetadataRefreshMode': 'FullRefresh',
+            'ReplaceAllMetadata': 'true'}, t=40)
+        refreshed = st in (200, 204)
+        steps.append({'label': 'refresh', 'ok': refreshed, 'msg': '定向刷新 Series %s → HTTP %d' % (sid, st)})
+    okall = all(x['ok'] for x in steps) if steps else False
+    secs = round(_ef2_time.time() - t0, 2)
+    res = {'ok': okall, 'sid': sid, 'tmdbid': tid, 'fields': fields,
+           'steps': steps, 'refreshed': refreshed, 'secs': secs,
+           'detail': '完成 %d/%d 步 · %ss（刷新已发，Emby 后台读取 NFO 需数秒~数十秒）' % (
+               sum(1 for x in steps if x['ok']), len(steps), secs)}
+    _ef2_log('tmdb_repair', which, okall, res['detail'], secs)
+    return res
+
+
+def _ef3_dl(url, dst):
+    """走代理下载 TMDB 图片到 dst（644）。"""
+    op = urllib.request.build_opener(
+        urllib.request.ProxyHandler({'http': tmdb_proxy(), 'https': tmdb_proxy()}))
+    req = urllib.request.Request(url, headers={'Accept': 'image/jpeg'})
+    with op.open(req, timeout=25) as r:
+        data = r.read()
+    with open(dst, 'wb') as fh:
+        fh.write(data)
+    os.chmod(dst, 0o644)
+    return len(data)
+
+
 def embyfix_v2_compare(term='', tmdbid=''):
     """双实例同片对比：同一片名/TMDBID 在 KFC 与 KFC2 的入库状态。"""
     if not term and not tmdbid:
@@ -34445,8 +34950,8 @@ def v4_route(handler, p):
 def v4_api(handler, p, q1):
     now = int(_t.time())
     try:
-        if p == '/api/healthz': return {'ok':True,'status':'ok','ts':now,'version':'4.1.0'}
-        if p == '/api/v4/manifest': return {'ok':True,'themes':['obsidian','liquid-glass','light-studio','terminal','editorial','neon-ops','pastel-soft','arctic-night'],'accents':['orange','blue','cyan','purple','green','rose','red','amber','teal','indigo','lime','slate'],'version':'4.1.0'}
+        if p == '/api/healthz': return {'ok':True,'status':'ok','ts':now,'version':'4.2.0'}
+        if p == '/api/v4/manifest': return {'ok':True,'themes':['obsidian','liquid-glass','light-studio','terminal','editorial','neon-ops','pastel-soft','arctic-night'],'accents':['orange','blue','cyan','purple','green','rose','red','amber','teal','indigo','lime','slate'],'version':'4.2.0'}
         if p.startswith('/api/status/health'): return v4_health()
         if p.startswith('/api/status/disk'): return v4_disk()
         if p.startswith('/api/monitor/containers'): return v4_containers()

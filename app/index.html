@@ -15814,7 +15814,8 @@ let EF2_OV=null, EF2_SCAN_TIMER=null, EF2_LIBS=null, EF2_OPS=null;
 const EF2_INSTS=[{k:'emby',n:'KFC 主库',p:'8096'},{k:'emby_adult',n:'KFC2 成人库',p:'8896'}];
 const EF2_TABS=[{k:'overview',n:'节点总览',i:'🩺'},{k:'cross',n:'三端同查',i:'🔎'},
  {k:'scan',n:'全量 / 单库检查',i:'📊'},{k:'refresh',n:'精确刷新',i:'⚡'},
- {k:'node',n:'节点控制',i:'🎛️'},{k:'ops',n:'操作历史',i:'📜'}];
+ {k:'node',n:'节点控制',i:'🎛️'},{k:'ops',n:'操作历史',i:'📜'},
+ {k:'tmdb',n:'TMDB 元数据',i:'🧪'}];
 const EF2_NODE_META=[
  {k:'cloud115',n:'115 网盘',i:'☁️'},{k:'mtPoll',n:'MT 定期轮询',i:'🔄'},
  {k:'mtOrganize',n:'整理落位',i:'📦'},{k:'strmGen',n:'STRM 生成',i:'📝'},
@@ -15871,6 +15872,7 @@ function ef2RenderBody(){
   else if(EF2_TAB==='refresh')ef2ViewRefresh(b);
   else if(EF2_TAB==='node')ef2ViewNode(b);
   else if(EF2_TAB==='ops')ef2ViewOps(b);
+  else if(EF2_TAB==='tmdb')ef2ViewTmdb(b);
 }
 
 /* ── Tab1 节点总览 ── */
@@ -16153,6 +16155,80 @@ async function ef2Node(action,arg){
     const d=await apiPost('/api/embyfix/v2/node',{which:EF2_WHICH,action:action,arg:arg||''});
     if(box)box.innerHTML='<div class="e2-nout '+(d.ok?'ok':'bad')+'">'+esc(d.detail)+'<div class="e2-sub2">耗时 '+(d.secs||0)+'s</div></div>';
     toast(action+(d.ok?' 完成':' 未通过'),d.ok?'ok':'err');
+  }catch(e){if(box)box.innerHTML='<span class="tag bad">'+esc(e)+'</span>';}
+}
+
+/* ── Tab7 TMDB 元数据（V3 2026-11-17）── */
+let EF3_ROWS=null, EF3_PROBE=null, EF3_SEL={};
+const EF3_FIELDS=[['cover','封面'],['title','集标题'],['plot','剧情简介'],['aired','首播日期'],
+ ['season_name','季名称'],['overview','剧集简介']];
+async function ef2ViewTmdb(b){
+  b.innerHTML='<div class="card"><h3 style="margin:0 0 10px">🧪 TMDB 官方元数据 <span class="sub" style="font-weight:400">自检链路 → 扫描缺项 → 逐剧逐项修复（拉官方数据写 NFO/图，仅定向刷新单剧，绝不整库盲刷）</span></h3>'+
+   '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">'+
+   '<button class="btn sm" onclick="ef3Probe()">① 自检 TMDB 链路</button>'+
+   '<input id="ef3_lib" class="e2-arg" placeholder="媒体库ID(留空=全部剧集)" style="width:190px">'+
+   '<input id="ef3_tid" class="e2-arg" placeholder="限定TMDBID(可选)" style="width:130px">'+
+   '<button class="btn sm acc" onclick="ef3Scan()">② 扫描缺失元数据</button>'+
+   '<span id="ef3_hint" class="sub"></span></div>'+
+   '<div id="ef3_probe"></div><div id="ef3_rows"><span class="sub">点「扫描缺失元数据」开始…</span></div></div>';
+}
+async function ef3Probe(){
+  const box=document.getElementById('ef3_probe');
+  box.innerHTML='<span class="sub">检测代理 / 直连 / 图片三条链路…</span>';
+  try{
+    const d=await apiGet('/api/embyfix/v3/tmdb_probe',20000);EF3_PROBE=d;
+    const tag=function(ok){return ok?'<span class="tag ok">正常</span>':'<span class="tag bad">异常</span>';};
+    box.innerHTML='<div class="e2-nout '+(d.ok?'ok':'bad')+'" style="margin-bottom:12px">'+
+      'TMDB 链路：API '+tag(d.api==='ok')+' · 直连 '+tag(d.direct==='ok')+' · 图片 '+tag(d.image==='ok')+
+      ' · Key '+esc(d.key_masked||'(未配置)')+' ('+esc(d.key_src||'无')+') · 代理 '+esc(d.proxy||'')+
+      '<div class="e2-sub2">'+esc(d.detail||'')+' · 耗时 '+(d.secs||0)+'s</div></div>';
+  }catch(e){box.innerHTML='<span class="tag bad">'+esc(e)+'</span>';}
+}
+async function ef3Scan(){
+  const box=document.getElementById('ef3_rows'),hint=document.getElementById('ef3_hint');
+  const lib=(document.getElementById('ef3_lib')||{}).value||'';
+  const tid=(document.getElementById('ef3_tid')||{}).value||'';
+  box.innerHTML='<span class="sub">扫描中（逐剧读 Emby API，可能 10~40s）…</span>';
+  if(hint)hint.textContent='';
+  try{
+    const d=await apiGet('/api/embyfix/v3/scan?which='+EF2_WHICH+'&library='+encodeURIComponent(lib)+'&tmdbid='+encodeURIComponent(tid),90000);
+    EF3_ROWS=d;EF3_SEL={};
+    if(!d.ok){box.innerHTML='<span class="tag bad">'+esc(d.detail||'扫描失败')+'</span>';return;}
+    if(hint)hint.textContent='共 '+d.total+' 剧 · '+d.broken+' 部缺元数据 · '+d.secs+'s'+(d.db?'':'（DB 未挂载，仅 API 检测）');
+    if(!(d.rows||[]).length){box.innerHTML='<div class="e2-nout ok">✅ 未发现缺失元数据的剧集</div>';return;}
+    let h='<div class="e2-scroll"><table class="e2-tb"><thead><tr><th>剧集</th><th>TMDBID</th><th>缺失项</th><th>逐项勾选修复</th><th>操作</th></tr></thead><tbody>';
+    (d.rows||[]).forEach(function(r,i){
+      const c=r.counts||{};
+      const gapNames=(r.gap||[]).map(function(g){
+        const f=EF3_FIELDS.find(function(x){return x[0]===g;});return f?f[1]:g;}).join('、');
+      h+='<tr><td><b>'+esc(r.name)+'</b><div class="e2-sub2">'+esc((r.path||'').slice(0,42))+'</div></td>'+
+        '<td>'+esc(r.tmdbid||'—')+'</td>'+
+        '<td><span class="tag bad">'+esc(gapNames)+'</span><div class="e2-sub2">'+c.ep_count+'集 · 缺封面'+c.cover+' 标题'+c.title+' 剧情'+c.plot+' 日期'+c.aired+'</div></td>'+
+        '<td><div style="display:flex;gap:6px;flex-wrap:wrap">'+EF3_FIELDS.map(function(f){
+          const has=(r.gap||[]).indexOf(f[0])>=0;
+          if(!has)return '';
+          const cid='ef3_'+i+'_'+f[0];
+          return '<label class="e2-sub2" style="white-space:nowrap"><input type="checkbox" id="'+cid+'" checked> '+f[1]+'</label>';
+        }).join('')+'</div></td>'+
+        '<td><button class="btn sm acc" onclick="ef3Repair('+i+',false)">修复勾选</button> '+
+        '<button class="btn sm" onclick="ef3Repair('+i+',true)">一键全修</button> '+
+        '<div class="e2-sub2" id="ef3_res_'+i+'"></div></td></tr>';
+    });
+    h+='</tbody></table></div>';
+    box.innerHTML=h;
+  }catch(e){box.innerHTML='<span class="tag bad">'+esc(e)+'</span>';}
+}
+async function ef3Repair(i,auto){
+  const r=(EF3_ROWS&&EF3_ROWS.rows||[])[i];if(!r)return;
+  let fields=[];
+  if(!auto){EF3_FIELDS.forEach(function(f){const el=document.getElementById('ef3_'+i+'_'+f[0]);if(el&&el.checked)fields.push(f[0]);});}
+  const box=document.getElementById('ef3_res_'+i);
+  if(box)box.innerHTML='<span class="e2-spin"></span> 修复中…';
+  try{
+    const d=await apiPost('/api/embyfix/v3/repair',{which:EF2_WHICH,sid:r.id,tmdbid:r.tmdbid,fields:fields,auto:auto,path:r.path});
+    if(box)box.innerHTML='<div class="e2-nout '+(d.ok?'ok':'bad')+'">'+esc(d.detail||'')+
+      (d.steps||[]).map(function(s){return '<div class="e2-sub2">'+(s.ok?'✓':'✗')+' '+esc(s.label)+' '+esc(s.msg||'')+'</div>';}).join('')+'</div>';
+    toast((r.name)+' 修复'+(d.ok?'完成':'未全通过'),d.ok?'ok':'err');
   }catch(e){if(box)box.innerHTML='<span class="tag bad">'+esc(e)+'</span>';}
 }
 

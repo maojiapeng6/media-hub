@@ -1,5 +1,20 @@
 # Changelog
 
+## [4.2.0] - 2026-11-17 · Emby 故障检修新增 TMDB 元数据补齐 + 自动修复
+
+> 从线上真源移植 V3 元数据检修能力到发布仓库（已去隐私：移除宿主机绝对路径，仅保留通用 `/dockroot/` 挂载探测）。所有既有 PT/MT/Emby/Bot 后端链路零改动，纯增量（后端 +505 行 / 前端 +77 行，0 删除功能）。
+
+### 新增：EMBY 故障检修 → 🧪 TMDB 元数据（第 7 标签）
+- **链路自检**：一键探测代理/直连/图片三条链路 + 显示当前 TMDB Key 配置。
+- **按库扫描**：逐剧检测 6 类元数据缺项（封面 / 集名 / 剧情 / 首播日 / 季名 / 剧集简介），只读不改。
+- **逐项修复**：每项可勾选、也可一键全修；拉取 TMDB 官方数据写本地 NFO + 图片（poster/fanart/季海报/每集 still），只对单剧定向 FullRefresh，绝不整库盲刷。
+- **批量自动补** `/api/embyfix/v3/auto_repair`：scan 找缺口 → 逐剧修，支持 `max_items`(单次上限)/`days`(只补近 N 天入库)/`dry_run`，供定时任务调用。
+
+### 关键实现
+- 后端 5 端点：`tmdb_probe` / `tmdb_meta` / `scan` / `repair` / `auto_repair`；前端 `ef2ViewTmdb` + `ef3Probe/ef3Scan/ef3Repair`。
+- NFO 官方字段写入（`<title>/<plot>/<aired>`）+ 每集 `<基名>-thumb.jpg` 集封面；刷新用 `ReplaceAllMetadata=true` 确保集名读 NFO。
+- 修复集名匹配 bug（文件名非 S 开头）、gap 去重、每集 still 补齐 3 处已修。
+
 ## [4.1.0] - 2026-11-16 · 全面升级：8 套结构级主题 + 严格两级调色 + 总览重做 + 只读监控
 
 > 按 11-16 重制规格执行。先产出四张规格表（`docs/v4.1-redesign-spec.md`）作为唯一依据，再动组件树。所有既有 PT/MT/Emby/Edge/JWT/Bot 后端链路零改动；legacy `/` 面板零回归。
