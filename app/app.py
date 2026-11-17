@@ -34950,8 +34950,8 @@ def v4_route(handler, p):
 def v4_api(handler, p, q1):
     now = int(_t.time())
     try:
-        if p == '/api/healthz': return {'ok':True,'status':'ok','ts':now,'version':'4.2.0'}
-        if p == '/api/v4/manifest': return {'ok':True,'themes':['obsidian','liquid-glass','light-studio','terminal','editorial','neon-ops','pastel-soft','arctic-night'],'accents':['orange','blue','cyan','purple','green','rose','red','amber','teal','indigo','lime','slate'],'version':'4.2.0'}
+        if p == '/api/healthz': return {'ok':True,'status':'ok','ts':now,'version':'4.2.2'}
+        if p == '/api/v4/manifest': return {'ok':True,'themes':['obsidian','liquid-glass','light-studio','terminal','editorial','neon-ops','pastel-soft','arctic-night'],'accents':['orange','blue','cyan','purple','green','rose','red','amber','teal','indigo','lime','slate'],'version':'4.2.2'}
         if p.startswith('/api/status/health'): return v4_health()
         if p.startswith('/api/status/disk'): return v4_disk()
         if p.startswith('/api/monitor/containers'): return v4_containers()

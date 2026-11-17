@@ -16159,7 +16159,7 @@ async function ef2Node(action,arg){
 }
 
 /* ── Tab7 TMDB 元数据（V3 2026-11-17）── */
-let EF3_ROWS=null, EF3_PROBE=null, EF3_SEL={};
+let EF3_ROWS=null, EF3_PROBE=null, EF3_SEL={}, EF3_STOP=false;
 const EF3_FIELDS=[['cover','封面'],['title','集标题'],['plot','剧情简介'],['aired','首播日期'],
  ['season_name','季名称'],['overview','剧集简介']];
 async function ef2ViewTmdb(b){
@@ -16168,8 +16168,12 @@ async function ef2ViewTmdb(b){
    '<button class="btn sm" onclick="ef3Probe()">① 自检 TMDB 链路</button>'+
    '<input id="ef3_lib" class="e2-arg" placeholder="媒体库ID(留空=全部剧集)" style="width:190px">'+
    '<input id="ef3_tid" class="e2-arg" placeholder="限定TMDBID(可选)" style="width:130px">'+
+   '<input id="ef3_days" class="e2-arg" value="0" title="0=全库含存量,14=仅近14天" style="width:70px" placeholder="天数">'+
    '<button class="btn sm acc" onclick="ef3Scan()">② 扫描缺失元数据</button>'+
+   '<button class="btn sm" style="background:#7c3aed;color:#fff" onclick="ef3AutoAll()">③ 一键全库修复(分批)</button>'+
+   '<button class="btn sm" id="ef3_stopbtn" style="display:none" onclick="EF3_STOP=true">⏹ 停止</button>'+
    '<span id="ef3_hint" class="sub"></span></div>'+
+   '<div id="ef3_progress"></div>'+
    '<div id="ef3_probe"></div><div id="ef3_rows"><span class="sub">点「扫描缺失元数据」开始…</span></div></div>';
 }
 async function ef3Probe(){
@@ -16230,6 +16234,37 @@ async function ef3Repair(i,auto){
       (d.steps||[]).map(function(s){return '<div class="e2-sub2">'+(s.ok?'✓':'✗')+' '+esc(s.label)+' '+esc(s.msg||'')+'</div>';}).join('')+'</div>';
     toast((r.name)+' 修复'+(d.ok?'完成':'未全通过'),d.ok?'ok':'err');
   }catch(e){if(box)box.innerHTML='<span class="tag bad">'+esc(e)+'</span>';}
+}
+
+let EF3_ALL_TIMER=null;
+async function ef3AutoAll(){
+  const prog=document.getElementById('ef3_progress');
+  const stopbtn=document.getElementById('ef3_stopbtn');
+  if(!prog)return;
+  EF3_STOP=false;
+  if(stopbtn)stopbtn.style.display='inline-block';
+  const days=(document.getElementById('ef3_days')||{}).value||'0';  // 0=全库(含存量), 14=近期
+  let round=0, totalOK=0, totalFail=0, totalSkipped=0, totalProcessed=0;
+  prog.innerHTML='<div class="e2-nout">🚀 开始全库批量修复（每批 8 部，自动连续跑，直到无缺失）…</div>';
+  async function batch(){
+    if(EF3_STOP){prog.innerHTML+='<div class="e2-sub2">⏹ 已停止。已处理 '+totalProcessed+' 部（成功 '+totalOK+' / 失败 '+totalFail+'）。</div>';if(stopbtn)stopbtn.style.display='none';return;}
+    round++;
+    try{
+      const d=await apiPost('/api/embyfix/v3/auto_repair',{which:EF2_WHICH,max_items:8,days:parseInt(days)||0,dry_run:false});
+      const n=d.processed||0;
+      totalProcessed+=n; totalOK+=(d.succeeded||0); totalFail+=(n-(d.succeeded||0));
+      totalSkipped+=(d.broken||0);
+      let lines='<div class="e2-sub2">第 '+round+' 批：扫 '+(d.scanned||0)+' 剧 / 缺 '+(d.broken||0)+' 部 / 本批修 '+n+' 部 / 成 '+(d.succeeded||0)+' · 累计 '+totalProcessed+' 部</div>';
+      (d.results||[]).forEach(function(r){
+        lines+='<div class="e2-sub2" style="padding-left:14px">'+(r.ok?'✓':'✗')+' '+esc(r.name||r.id)+
+          ' <span class="sub">'+esc((r.detail||'').slice(0,70))+'</span></div>';
+      });
+      prog.innerHTML+=lines;
+      if(n>0){ EF3_ALL_TIMER=setTimeout(batch, 1500); }  // 继续下一批
+      else { prog.innerHTML+='<div class="e2-nout ok">✅ 全库修复完成：共处理 '+totalProcessed+' 部（成功 '+totalOK+' / 失败 '+totalFail+'）。剩余缺项 '+(d.broken||0)+' 部（可能 TMDB 无数据或不可达）。</div>'; if(stopbtn)stopbtn.style.display='none'; }
+    }catch(e){ prog.innerHTML+='<div class="tag bad">批次 '+round+' 出错：'+esc(e)+'</div>'; if(stopbtn)stopbtn.style.display='none'; }
+  }
+  batch();
 }
 
 /* ── Tab6 操作历史 ── */
