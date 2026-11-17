@@ -1,5 +1,42 @@
 # Changelog
 
+## [4.2.3] - 2026-11-17 · 换盘运维：14T 外接盘接入 PT 下载链路 + 加种硬闸修复
+
+> 用户卸掉原 3.7T PT 下载盘、加装 14T 外接盘后的链路恢复。本次为**线上运维改动**（含部署路径与站点配置），按隐私红线不把私有源码 / compose 塞进公开仓；修复实体在线上运行实例 + 本地脱敏归档包 `kfcgame-v2.0.6*`，历史包 v2.0.4 / v2.0.5 全部保留。
+
+### 真因（换盘后暴露的三层问题）
+
+| # | 现象 | 根因 |
+|---|---|---|
+| 1 | 保号动作 9/9 全跑，但上传量不涨、考核长期 warn | 新 14T 盘挂在外部存储路径，**没有任何容器挂载它**；4 个 compose 仍指向被卸掉的旧盘路径，该路径退化成系统盘上 256K 空目录 |
+| 2 | qB 803 个种子里 726 `missingFiles` + 46 `error`，仅 13 个存活做种 | 旧盘物理移除，做种文件不在了（按用户决定**全部保留不删**，等旧盘接回可恢复） |
+| 3 | 每 20 分钟日志「保号暂停加种：可用空间仅 51.7G < 60G」 | `_ka_guard_ok()` 用 `disk_usage("/downloads")` 检查的是 **kfcgame 容器自己的 overlay（旧系统盘）**，不是 qB 真实下载盘；且 726 个死种占满 `KA_MAX_TORRENTS=300` 名额 |
+
+### 改动清单（全部增量补丁 + 逐文件备份）
+
+- **4 个 compose 下载目录改挂新盘**：`qbittorrent` / `moviepilot-v3` / `pt2cloud` / `media-hub`，统一指向新外接盘 `pt/downloads`（面板为只读 `pt` 根）。备份 `docker-compose.yml.bak.20261117_newdisk`。
+- **kfcgame compose 新增只读挂载** `:/ptdisk:ro`，专供硬闸空间检查，不覆盖 `/downloads`（避免影响 `sortpath` 归类）。
+- **`app/modules/keepalive.py::_ka_guard_ok()` 重写**：① 空间优先读 qB `/api/v2/sync/maindata → server_state.free_space_on_disk`（即真实下载盘），失败回退 `/ptdisk`；② 数量闸只统计**有效状态**种子，`missingFiles`/`error` 死种按用户要求保留但不再占加种名额。
+- 按铁律 `docker compose up -d` 重建 5 个容器（**不是 restart**，restart 不重读挂载）；kfcgame 改了镜像内源码，用 `--build`。
+- 顺带修正：qB 容器名由带 hash 前缀的历史名恢复为 `qbittorrent`，与面板 `cname` 配置一致，`/api/containers` 现已能正常识别。
+
+### 实测结果
+
+| 项目 | 结果 |
+|---|---|
+| 全站保号 | `/api/ka/sync` 触发，9 站逐个「访问登录+探测」，末次 `login=0.0 天前` |
+| **馒头专项** | 官方 `updateLastBrowse` 信标 **`code=0 SUCCESS`**；`/api/member/profile` 读回当前账号（uid 与 JWT 一致、无错配），JWT `valid`、看门狗在线；真值 上传 **21.49G** / 魔力 381.4 |
+| 新盘挂载 | 5 个容器全部指向新盘；qB 报告可用 **13037.9G**，`/ptdisk` 与 `/downloads` 均为 13T |
+| **加种恢复** | 硬闸 `GUARD_OK=True`（修复前 `False`）；`seed_tick` 后 keepalive **300 → 304**，新增 3 个 `downloading`；新盘已用 895M → 17G；面板 qB `dl 6.87 MB/s / up 2.62 MB/s / connected` |
+| 达标核算 | 登录 **9/9**、实时数值 **7/9**、面板 ok **7/9**、考核 ok **3/9** |
+| 无回归 | 面板 HTTP 200、`/api/qb/realtime` 正常、5 容器无 Traceback、旧路径引用 0、无凭据变更 |
+
+### 仍未达标（非本次可修）
+
+- **馒头新手考核** `warn`：上传 21.5/30G、下载 0/15G、魔力 381/6000。加种已恢复，需靠新盘持续做种累积，不是保号动作能瞬间补齐的。
+- **HDArea / NicePT** `live_ok=false`：MP 实时通道 Cookie 失效（bot 侧 cookie 是新的）；**CarPT / NicePT** 免费种列表返回登录页。按红线**未自动登录 / 未试密**，需面板「Cookie 抓取中心」人工重抓。
+- **CarPT / CSPT / ZMTP 等** 直连偶发读超时（bot 未配代理），属网络抖动，代码已有直连→代理兜底但当前 `_proxies()` 为空。
+
 ## [4.2.2] - 2026-11-17 · TMDB 元数据新增「一键全库修复」Web 开关
 
 > TMDB 元数据标签新增第③个按钮「一键全库修复(分批)」：循环调用 auto_repair，每批 8 部自动连续跑至无缺失，实时显示进度、支持⏹停止。天数框 0=全库含存量 / 14=仅近期。纯前端增强，后端 auto_repair 端点复用无改动。
