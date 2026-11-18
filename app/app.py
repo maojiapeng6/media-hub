@@ -23452,6 +23452,54 @@ def _q2f_speed_push(key, xfer, size):
     return smooth
 
 
+def q2f_put_to_115(part, rel, on_progress=None):
+    """★ V1.57 OpenList 直传：把本地 part 分块 PUT 到 /115/待整理/转换/夸克/{rel}。
+    File-Path 必须 URL 百分号编码（实测 base64 会 storage not found）；自动建深层目录。
+    on_progress(sent,total) 每次上传回调。返回 (ok, msg)。"""
+    try:
+        import urllib.parse, http.client
+        base = (cfg().get('q2f_ol_base') or Q2F_OL).rstrip('/')
+        u = urllib.parse.urlsplit(base)
+        host = u.hostname or '127.0.0.1'
+        port = u.port or (443 if u.scheme == 'https' else 80)
+        vpath = Q2F_DST.rstrip('/') + '/' + rel.lstrip('/')
+        fp = urllib.parse.quote(vpath, safe='')
+        total = os.path.getsize(part)
+        if u.scheme == 'https':
+            conn = http.client.HTTPSConnection(host, port, timeout=900)
+        else:
+            conn = http.client.HTTPConnection(host, port, timeout=900)
+        conn.putrequest('PUT', '/api/fs/put')
+        conn.putheader('Authorization', q2f_token())
+        conn.putheader('File-Path', fp)
+        conn.putheader('Content-Type', 'application/octet-stream')
+        conn.putheader('Content-Length', str(total))
+        conn.endheaders()
+        sent, last = 0, time.time()
+        with open(part, 'rb') as f:
+            while True:
+                chunk = f.read(1024 * 512)
+                if not chunk:
+                    break
+                conn.send(chunk)
+                sent += len(chunk)
+                if on_progress and time.time() - last > 1.0:
+                    try:
+                        on_progress(sent, total)
+                    except Exception:
+                        pass
+                    last = time.time()
+        r = conn.getresponse()
+        body = r.read().decode('utf-8', 'replace')
+        conn.close()
+        obj = json.loads(body)
+        if obj.get('code') != 200:
+            return False, 'OpenList 直传失败: %s' % str(obj.get('message'))[:80]
+        return True, '已 OpenList 直传 115', vpath
+    except Exception as e:
+        return False, 'OpenList 直传异常: %s' % str(e)[:100], ''
+
+
 def q2f_fetch_one(it, on_progress):
     """下载单文件并投递 CD2；返回 (ok, msg, rapid)。支持取消/暂停/限速。"""
     try:
@@ -23472,24 +23520,17 @@ def q2f_fetch_one(it, on_progress):
         os.makedirs(Q2F_TMP, exist_ok=True)
         os.makedirs(Q2F_CD2, exist_ok=True)
         part = os.path.join(Q2F_TMP, 'q2f_' + hashlib.md5(rel.encode('utf-8')).hexdigest()[:12] + '.part')
-        dst = os.path.join(Q2F_CD2, rel)
-        if os.path.exists(dst) and not it.get('force'):
-            try:
-                cur = os.path.getsize(dst)
-            except Exception:
-                cur = -1
-            if cur == it['size']:
-                return True, '已存在（跳过）', False
-            try:
-                os.remove(dst)          # 自愈：不完整文件删除重传
-            except Exception as e:
-                return False, '不完整文件无法移除: %s' % str(e)[:70], False
-        elif os.path.exists(dst) and it.get('force'):
-            try:
-                os.remove(dst)          # 手动强制重传：删除已有文件，真正重新下载
-            except Exception as e:
-                return False, '强制重传无法移除旧文件: %s' % str(e)[:70], False
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        # ★ V1.57：已存在检查走 115/OpenList，不再看 CD2 本地挂载（FUSE 写入不触发上传，本地存在≠云端存在）
+        dst = Q2F_DST.rstrip('/') + '/' + rel.lstrip('/')
+        _exist = q2f_api('POST', '/api/fs/get', {'path': dst, 'password': ''}, t=15)
+        _ed = (_exist.get('data') or {}) if isinstance(_exist, dict) else {}
+        _esize = int(_ed.get('size') or 0)
+        if _exist.get('code') == 200 and _esize > 0:
+            _dir = os.path.dirname(dst); _nm = os.path.basename(dst)
+            if not it.get('force') and _esize == it['size']:
+                return True, '115 已存在（跳过）', False
+            # 大小不符 或 手动强制重传：删除 115 上旧文件后真正重传
+            q2f_api('POST', '/api/fs/remove', {'dir': _dir, 'names': [_nm]}, t=25)
         # ★ V1.56 断点续传：part 存在且小于目标时带 Range 续传，避免重头下 15GB
         start = 0
         try:
@@ -23558,35 +23599,33 @@ def q2f_fetch_one(it, on_progress):
         if it['size'] > 0 and got != it['size']:
             os.remove(part)
             return False, '下载大小不符 %d/%d' % (got, it['size']), False
-        shutil.move(part, dst)
-        try:
-            final = os.path.getsize(dst)
-        except Exception:
-            final = -1
-        if it['size'] > 0 and final != it['size']:
+        # ★ V1.57 OpenList 直传：put 同步落地，不再写 CD2 FUSE（那个容器内写不上传）
+        def _up_prog(sent, total):
             try:
-                os.remove(dst)
+                st = q2f_state(); cur = st['items'].get(key)
+                if cur:
+                    cur['up_progress'] = round(sent * 100.0 / total, 1) if total else 0
+                    cur['msg'] = '直传 115 中 %d%% · 已传 %s' % (cur['up_progress'], _q2f_fmt(sent))
+                    q2f_save(st)
             except Exception:
                 pass
-            return False, '落地大小不符 %d/%d（已移除，下轮自动重传）' % (final, it['size']), False
-        # ★ V1.56 落地校验：CD2 挂载写入≠115 云端可见，必须经 OpenList API 确认，杜绝假成功+误删源
+        _pok, _pmsg, _pvpath = q2f_put_to_115(part, rel, _up_prog)
+        if not _pok:
+            return False, _pmsg, False
+        # 落地强校验：115 可见 + 大小一致（put 同步落地，fs/get 立即确认，杜绝假成功+误删源）
         try:
-            # ★ 校验路径必须用 OpenList 挂载路径(/115/...)，不是 CD2 宿主机路径(/CloudNAS/115open/...)
-            # ★ CD2 写本地 FUSE 后异步上传 115，需轮询等待最多 90 秒（覆盖上传延迟）
-            _vpath = Q2F_DST.rstrip('/') + '/' + rel.lstrip('/')
-            _vok, _vsize = False, 0
-            for _vr in range(15):
-                _verify = q2f_api('POST', '/api/fs/get', {'path': _vpath, 'password': ''}, t=15)
-                _vd = (_verify.get('data') or {}) if isinstance(_verify, dict) else {}
-                _vsize = int(_vd.get('size') or 0)
-                if _verify.get('code') == 200 and _vsize > 0:
-                    _vok = True; break
-                time.sleep(6)
-            if not _vok:
-                return False, '落地校验失败：CD2 已写但 115 云端 90 秒内不可见（未删源，稍后重试）', False
+            _verify = q2f_api('POST', '/api/fs/get', {'path': dst, 'password': ''}, t=20)
+            _vd = (_verify.get('data') or {}) if isinstance(_verify, dict) else {}
+            _final = int(_vd.get('size') or 0)
+            if _verify.get('code') != 200 or (it['size'] > 0 and _final != it['size']):
+                return False, '落地校验失败：115 大小 %d/%d（未删源，下轮重试）' % (_final, it['size']), False
         except Exception as _ve:
             return False, '落地校验异常：%s（未删源）' % str(_ve)[:60], False
-        return True, '已投递并校验 115 落地（%s）' % dst, False
+        try:
+            os.remove(part)   # 直传成功后删本地临时文件
+        except Exception:
+            pass
+        return True, '已 OpenList 直传并校验 115 落地（%s）' % dst, False
     except Exception as e:
         if str(e) == '__CANCELLED__':
             return False, '__CANCELLED__', False

@@ -34224,12 +34224,13 @@ async function cvLoad(){
   const nt=document.getElementById('cv_note');
   if(nt)nt.innerHTML='<b>结论：不存在「夸克秒传到 115」。</b><br>115 秒传只在 <b>115 云端已存在相同 SHA1</b> 时成立：只提交哈希即瞬间入库、不传数据。'
     +'夸克与 115 哈希库互不共享，跨盘不保证秒传；热门资源可能命中，冷门/私有文件必然实传。<br><br>'
-    +'<b>本链路实测</b>：OpenList 跨存储复制被 115 返回「校验文件失败 code 10002」，故采用「取直链 → 下载 → 写入 CD2 挂载 → CD2 上传 115」。'
-    +'CD2 上传时若命中云端已有文件由其内部秒传，面板<b>不虚报命中数</b>（当前 '+d.rapid_hits+' 次）。<br><br>'
+    +'<b>本链路（V1.57 起）</b>：夸克取直链 → 下载到本地 → <b>OpenList 直传 115</b>（put，自动建目录+大小强校验）。'
+    +'旧 CD2 写入法实测容器内 FUSE 写入不触发上传（落地=0）已弃用；跨存储复制被 115 拒（code 10002）亦不可用。'
+    +'命中云端已有 SHA1 时 115 内部秒传极快，冷门文件实传；面板<b>不虚报命中数</b>（当前 '+d.rapid_hits+' 次）。<br><br>'
     +'<b>瓶颈</b>：夸克限速 + QuarkOpen only_proxy，下载需经 OpenList 本地代理；ETA 按实时速率（无任务时用历史平均）动态估算。';
   const fl=document.getElementById('cv_flow');
   if(fl){const steps=[['SOURCE','夸克网盘',d.src],['OPENLIST','取直链','refresh:true'],['QUEUE','队列调度','优先级 / 并发 / 限速'],
-    ['CLOUDDRIVE2','CD2 落地',d.cd2],['TARGET','115 目标',d.dst]];
+    ['OPENLIST','OpenList 直传',d.cd2],['TARGET','115 目标',d.dst]];
     fl.innerHTML='<div class="nd-flow">'+steps.map((s,i)=>'<div class="nd-step"><div class="n">'+s[0]+'</div>'
       +'<div class="t">'+esc(s[1])+'</div><div class="d">'+esc(s[2])+'</div></div>'
       +(i<steps.length-1?'<div class="nd-arrow">➜</div>':'')).join('')+'</div>';}
