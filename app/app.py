@@ -23218,6 +23218,11 @@ Q2F_DEFAULT_SETTINGS = {
 }
 
 
+# ★ V1.56：下载停滞检测（key -> (last_bytes, last_ts)）+ TMDB 元数据缓存
+_q2f_stall = {}
+_Q2F_META_CACHE = {}      # rel(剥技术噪声后的片名) -> 元数据 dict
+_Q2F_META_LOCK = threading.Lock()
+
 def q2f_token():
     """只读 OpenList DB 取 admin token，不硬编码任何凭据。"""
     try:
@@ -23485,21 +23490,57 @@ def q2f_fetch_one(it, on_progress):
             except Exception as e:
                 return False, '强制重传无法移除旧文件: %s' % str(e)[:70], False
         os.makedirs(os.path.dirname(dst), exist_ok=True)
+        # ★ V1.56 断点续传：part 存在且小于目标时带 Range 续传，避免重头下 15GB
+        start = 0
+        try:
+            if os.path.exists(part):
+                _psz = os.path.getsize(part)
+                if 0 < _psz < it['size']:
+                    start = _psz
+                elif _psz >= it['size']:
+                    os.remove(part); start = 0
+        except Exception:
+            start = 0
         req = urllib.request.Request(raw, headers={'User-Agent': 'Mozilla/5.0'})
+        if start > 0:
+            req.add_header('Range', 'bytes=%d-' % start)
+            logger.info('[Q2F] resume %s from %d', rel[:50], start)
         limit = float(q2f_state()['settings'].get('speed_limit') or 0) * 1048576
-        xfer, last_t, last_save = 0, time.time(), 0
-        with urllib.request.urlopen(req, timeout=60) as r, open(part, 'wb') as w:
+        xfer, last_t, last_save = start, time.time(), 0
+        _last_bytes, _last_progress_ts = start, time.time()
+        # ★ V1.56：socket 超时(20s) + 停滞检测(90s 无增长则中断重连)
+        import socket
+        socket.setdefaulttimeout(20)
+        try:
+            resp = urllib.request.urlopen(req, timeout=25)
+        except Exception as _oe:
+            # Range 请求若服务端不支持(返回整段)，从头重试一次
+            if start > 0:
+                req2 = urllib.request.Request(raw, headers={'User-Agent': 'Mozilla/5.0'})
+                resp = urllib.request.urlopen(req2, timeout=25)
+                start = xfer = 0
+                try: os.remove(part)
+                except Exception: pass
+            else:
+                raise
+        mode = 'ab' if start > 0 else 'wb'
+        with resp as r, open(part, mode) as w:
             while True:
                 if key in _q2f_cancel:
                     _q2f_cancel.discard(key)
                     raise RuntimeError('__CANCELLED__')
                 while _q2f_paused.is_set():
-                    time.sleep(0.5)
-                chunk = r.read(1024 * 1024)
+                    time.sleep(0.5); _last_progress_ts = time.time()
+                chunk = r.read(1024 * 256)   # 更小分块，便于停滞检测及时触发
                 if not chunk:
                     break
                 w.write(chunk)
+                w.flush()
                 xfer += len(chunk)
+                if xfer > _last_bytes:
+                    _last_bytes, _last_progress_ts = xfer, time.time()
+                elif time.time() - _last_progress_ts > 90:
+                    raise IOError('下载停滞>90秒（直链断流），中断以便重连续传')
                 sp = _q2f_speed_push(key, xfer, it['size'])
                 eta = ((it['size'] - xfer) / sp) if sp > 0 else 0
                 if time.time() - last_save > 1.5:
@@ -23512,6 +23553,7 @@ def q2f_fetch_one(it, on_progress):
                         time.sleep(min(want - gap, 5))
                 last_t = time.time()
         on_progress(xfer, 0, 0, it['size'])
+        socket.setdefaulttimeout(None)
         got = os.path.getsize(part)
         if it['size'] > 0 and got != it['size']:
             os.remove(part)
@@ -23527,7 +23569,24 @@ def q2f_fetch_one(it, on_progress):
             except Exception:
                 pass
             return False, '落地大小不符 %d/%d（已移除，下轮自动重传）' % (final, it['size']), False
-        return True, '已投递 CD2 → 115（%s）' % dst, False
+        # ★ V1.56 落地校验：CD2 挂载写入≠115 云端可见，必须经 OpenList API 确认，杜绝假成功+误删源
+        try:
+            # ★ 校验路径必须用 OpenList 挂载路径(/115/...)，不是 CD2 宿主机路径(/CloudNAS/115open/...)
+            # ★ CD2 写本地 FUSE 后异步上传 115，需轮询等待最多 90 秒（覆盖上传延迟）
+            _vpath = Q2F_DST.rstrip('/') + '/' + rel.lstrip('/')
+            _vok, _vsize = False, 0
+            for _vr in range(15):
+                _verify = q2f_api('POST', '/api/fs/get', {'path': _vpath, 'password': ''}, t=15)
+                _vd = (_verify.get('data') or {}) if isinstance(_verify, dict) else {}
+                _vsize = int(_vd.get('size') or 0)
+                if _verify.get('code') == 200 and _vsize > 0:
+                    _vok = True; break
+                time.sleep(6)
+            if not _vok:
+                return False, '落地校验失败：CD2 已写但 115 云端 90 秒内不可见（未删源，稍后重试）', False
+        except Exception as _ve:
+            return False, '落地校验异常：%s（未删源）' % str(_ve)[:60], False
+        return True, '已投递并校验 115 落地（%s）' % dst, False
     except Exception as e:
         if str(e) == '__CANCELLED__':
             return False, '__CANCELLED__', False
@@ -23870,6 +23929,74 @@ def q2f_mt_create():
         return {'ok': False, 'msg': str(e)[:160]}
 
 
+def q2f_meta(rel):
+    """★ V1.56：从转换文件路径剥出片名 → TMDB 查海报/年份/评分/ID（带缓存，失败不影响主流程）。"""
+    try:
+        nm = preclean(os.path.basename(rel or ''))
+        # 若文件名是技术名(The.Mongoose.2026...)，取上级目录名更像片名
+        parent = os.path.basename(os.path.dirname(rel or ''))
+        # ★ 优先从整条路径的【】/[]里抽片名（如【猫鼬 2026】→ 猫鼬），最可靠
+        br = re.search(r'[【\[]\s*([^】\]]{2,40}?)\s*[】\]]', rel or '')
+        brname = ''
+        if br:
+            brname = re.sub(r'\s*(19|20)\d{2}\s*$', '', br.group(1)).strip()
+        cand = [x for x in ([brname] if brname else []) + [nm, preclean(parent), parent] if x and len(x) > 1]
+        if not cand:
+            return {'ok': False, 'msg': '无可识别片名'}
+        key = cand[0]
+        with _Q2F_META_LOCK:
+            if key in _Q2F_META_CACHE:
+                return _Q2F_META_CACHE[key]
+        if not tmdb_key():
+            return {'ok': False, 'msg': '未配置 TMDB Key'}
+        found = None
+        for q in cand[:3]:
+            for kind in ('movie', 'tv'):
+                rs = []
+                for _try in range(2):  # 代理偶发超时，重试一次
+                    rs = tmdb_search(q, kind)
+                    if rs and not rs[0].get('__err'):
+                        break
+                if rs and not rs[0].get('__err'):
+                    found = (rs[0], kind); break
+            if found: break
+        if not found:
+            # ★ 失败不缓存：TMDB 代理偶发不通，代理恢复后应能重试而非永久"未匹配"
+            return {'ok': False, 'msg': 'TMDB 未匹配/代理暂不可用', 'query': key,
+                    'hint': 'TMDB 走软路由代理，代理恢复后自动显示'}
+        r0, kind = found
+        title = r0.get('title') or r0.get('name') or key
+        out = {'ok': True, 'query': key, 'tmdb_id': r0.get('id'),
+               'title': title, 'type': kind,
+               'year': (r0.get('release_date') or r0.get('first_air_date') or '')[:4],
+               'vote': r0.get('vote_average'), 'overview': (r0.get('overview') or '')[:220],
+               'poster': ('/tmdbimg/t/p/w185' + r0['poster_path']) if r0.get('poster_path') else '',
+               'tmdb_url': 'https://www.themoviedb.org/%s/%s' % (kind, r0.get('id'))}
+        with _Q2F_META_LOCK:
+            _Q2F_META_CACHE[key] = out
+        return out
+    except Exception as e:
+        return {'ok': False, 'msg': str(e)[:100]}
+
+
+def q2f_folder_stats():
+    """★ V1.56：按一级/二级目录聚合文件夹维度统计。"""
+    s = q2f_state()
+    agg = {}
+    for x in s['items'].values():
+        rel = x.get('rel') or ''
+        parts = rel.split('/')
+        folder = '/'.join(parts[:-1]) or '(根)'
+        a = agg.setdefault(folder, {'folder': folder, 'total': 0, 'done': 0,
+                                    'running': 0, 'queued': 0, 'failed': 0,
+                                    'bytes': 0})
+        a['total'] += 1
+        st = x.get('status')
+        if st in a: a[st] += 1
+        a['bytes'] += int(x.get('size') or 0)
+    return {'folders': len(agg), 'detail': sorted(agg.values(), key=lambda z: -z['total'])}
+
+
 def q2f_status():
     """统一状态：队列聚合 / 速度 / ETA / 明细 / 服务 / MT / 空间 / 设置。"""
     s = q2f_state()
@@ -23915,6 +24042,7 @@ def q2f_status():
             'last_scan': s.get('last_scan', 0), 'last_msg': s.get('last_msg', ''),
             'src': Q2F_SRC, 'dst': Q2F_DST, 'cd2': Q2F_CD2, 'mt': Q2F_MT_SRC,
             'settings': s['settings'], 'stats': s['stats'], 'disk': disk,
+            'folder_stats': q2f_folder_stats(),
             'total': len(items), 'done': len(done), 'running': len(running),
             'queued': len(queued), 'failed': len(by('failed')),
             'cancelled': len(by('cancelled')), 'paused_cnt': len(by('paused')),
@@ -29342,6 +29470,8 @@ class H(BaseHTTPRequestHandler):
             return self._j(q2f_links(self_addr_from_headers(self.headers)))
         if p == '/api/q2f/status':
             return self._j(q2f_status())
+        if p.startswith('/api/q2f/meta'):
+            return self._j(q2f_meta(q1('rel', '')))
         if p == '/api/memguard/status':
 
             return self._j(mg_snapshot())

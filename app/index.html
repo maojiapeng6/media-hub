@@ -12694,6 +12694,16 @@ body.light .upl-card{background:rgba(20,30,60,.035);border-color:rgba(20,30,60,.
 .nd-linkcard .tx{flex:1;min-width:0}
 .nd-linkcard .tx b{font-size:12px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nd-linkcard .tx code{font-size:10.5px;color:#7dd3fc;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* ★ V1.56 转换媒体墙 / 记录封面 */
+.cv-mw{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:12px}
+.cv-mc{border:1px solid var(--nd-line);border-radius:11px;overflow:hidden;background:var(--nd-soft);cursor:pointer;transition:.18s;display:flex;flex-direction:column}
+.cv-mc:hover{border-color:rgba(96,165,250,.55);transform:translateY(-2px);box-shadow:0 8px 22px rgba(0,0,0,.22)}
+.cv-mc .cv-mp{height:198px;background:linear-gradient(150deg,#1b2740,#0f172a);display:grid;place-items:center;overflow:hidden;border-bottom:1px solid var(--nd-line)}
+.cv-mc .cv-mp img{width:100%;height:100%;object-fit:cover;display:block}
+.cv-mc .cv-mph{padding:12px;text-align:center;font-size:12px;color:#94a3b8;line-height:1.5}
+.cv-mc .cv-mt{padding:8px 9px 3px;font-size:12px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cv-mc .cv-ms{padding:2px 9px 9px;font-size:10.5px;color:#7dd3fc;min-height:20px}
+.cv-rec-poster img{display:block}
 @media(max-width:980px){.nd-split{grid-template-columns:1fr}.fb-shell{grid-template-columns:1fr}.fb-tree{max-height:190px}}
 @media(max-width:720px){
   .nd-grid{grid-template-columns:1fr}.nd-flow{flex-direction:column}.nd-arrow{transform:rotate(90deg);height:14px}
@@ -14924,15 +14934,15 @@ function navDomOrder(){
   // ★ V1.52：用户要求「网盘」为总览之后的第二级大菜单、「转换」紧随其后。
   //   用版本标记保证每台设备首次加载 V1.52 必定重排一次（之后仍可自由拖拽）。
   let pinned=false;
-  try{ pinned=localStorage.getItem('kfc_nav_pin_v152')==='1'; }catch(e){}
-  if(!pinned||!o.includes('☁️ 网盘')||!o.includes('🔄 转换')){
-    const rest=o.map(l=>byL[l]).filter(Boolean).filter(d=>
-      d.label!=='☁️ 网盘'&&d.label!=='🔄 转换'&&d.label!=='🖥 总览');
-    const head=[byL['🖥 总览'],byL['☁️ 网盘'],byL['🔄 转换']].filter(Boolean);
+  try{ pinned=localStorage.getItem('kfc_nav_pin_v156')==='1'; }catch(e){}
+  const ND_LBL='☁️ 网盘中心';
+  if(!pinned||!o.includes(ND_LBL)){
+    const rest=o.map(l=>byL[l]).filter(Boolean).filter(d=>d.label!==ND_LBL&&d.label!=='◈ 工作台');
+    const head=[byL['◈ 工作台'],byL[ND_LBL]].filter(Boolean);
     const out=head.concat(rest);
     base.forEach(d=>{ if(out.indexOf(d)<0)out.push(d); });
     try{ localStorage.setItem('kfc_nav_order',JSON.stringify(out.map(d=>d.label)));
-         localStorage.setItem('kfc_nav_pin_v152','1'); }catch(e){}
+         localStorage.setItem('kfc_nav_pin_v156','1'); }catch(e){}
     return out;
   }
 
@@ -33678,7 +33688,7 @@ async function ptAutoClean(btn){
 
 // ═══════════════ V1.51 网盘中枢 / 队列化转换控制台 ═══════════════
 const ND_T={t:null,page:'',loader:null};
-const CV={sel:new Set(),filter:'all',logFilter:'all'};
+const CV={sel:new Set(),filter:'all',logFilter:'all',media:new Map()};
 const MAN={files:[],sel:new Set(),q:'',sort:'name'};
 const MANF={dirs:[],map:{},sel:new Set(),q:''};
 const REC={q:'',filter:'all'};
@@ -34131,6 +34141,8 @@ async function renderCvConsole(){
     +ndHead('🎛️ 转换控制台 · Conversion Console','整个夸克网盘 → 115 / 待整理 / 夸克（保留原目录结构）· 队列化转换 / 实时 ETA / 手动干预')
     +'<div class="card" id="cv_top"><div class="sub">读取中…</div></div>'
     +'<div class="card" id="cv_kpi"><div class="sub">读取中…</div></div>'
+    +'<div class="card" id="cv_mediawall"><div class="sub">媒体封面读取中…</div></div>'
+    +'<div class="card" id="cv_folders"><div class="sub">文件夹统计读取中…</div></div>'
     +ndCard('📍 转换去向 · 文件落地说明','<div class="nd-note" id="cv_dest_note">'
       +'<b>链路</b>：夸克网盘 <code>/夸克/**</code>（保留原目录结构）→ OpenList 直链 → 投递 <code>115/待整理/转换/夸克/**</code> → 投递成功后<b>立即彻底删除夸克源文件</b>（开放平台直删，不经回收站）。<br>'
       +'<b>⚠️ 落地后被搬走？</b>：若你看到文件没留在「转换/夸克」，是因为 <b>MT 自动整理方案</b>（realtimeMode=polling）在文件落地瞬间把它按规则整理到了 <code>115/KFC/云盘影视/{电影,电视剧,动漫,…}</code>。这是下游整理在正常工作，不是转换失败 —— 在下方<b>任务记录</b>的「落地 115 去向」列可逐条核对。'
@@ -34202,6 +34214,8 @@ async function cvLoad(){
       const p=o.split('|');return '<option value="'+p[0]+'"'+(CV.filter===p[0]?' selected':'')+'>'+p[1]+'</option>';}).join('')
     +'</select>';
   window.__cvD=d;
+  cvMediaWallRender(d);
+  cvFoldersRender(d);
   cvRowsRender(d);
   const lf=document.getElementById('cv_logfilter');
   if(lf)lf.innerHTML=['all|全部','ok|成功','err|失败'].map(o=>{const p=o.split('|');
@@ -34229,6 +34243,79 @@ async function cvLoad(){
       +'<div class="row" style="gap:7px;margin-top:10px"><button class="btn sm acc" onclick="cvMt(this)">＋ 创建 / 刷新任务组方案</button>'
       +'<button class="btn sm" onclick="switchTab(\'mt\')">🧹 打开 MT 整理</button></div>';}
 }
+// ★ V1.56 顶级媒体墙：封面 + TMDB 信息 + 点击跳转
+function _cvTitleFromFolder(folder){
+  const seg=String(folder||'').split('/').filter(Boolean);
+  const last=seg.length?seg[seg.length-1]:'';
+  // ★ 优先取【】/[]里的内容作片名（如【猫鼬 2026】… → 猫鼬），避免剥噪声后只剩"&杜比视界…"
+  const br=String(last).match(/[【\[]([^】\]]{2,40})[】\]]/);
+  if(br&&br[1])return br[1].replace(/\s*(19|20)\d{2}\s*$/,'').trim()||br[1].trim();
+  return precleanLite(last)||last;
+}
+function precleanLite(n){
+  return String(n||'').replace(/\b(2160p|1080p|720p|4K|HDR|DV|WEB-DL|H265|H264|HEVC|x265|x264)\b/gi,' ')
+    .replace(/[_+.]+/g,' ').replace(/\s+/g,' ').trim();
+}
+async function cvMetaOne(folder){
+  const t=_cvTitleFromFolder(folder);
+  if(!t)return null;
+  if(CV.media.has(t))return CV.media.get(t);
+  try{
+    const r=await apiGet('/api/q2f/meta?rel='+encodeURIComponent(folder+'/'+t));
+    if(r&&r.ok)CV.media.set(t,r);   // ★ 只缓存成功，代理恢复后可重试
+    return r;
+  }catch(e){ return {ok:false,msg:'meta请求失败'}; }
+}
+function _cvPaintMeta(card,m,t){
+  if(!card||!m)return;
+  const s=card.querySelector('.cv-ms'); if(!s)return;
+  if(m.ok){
+    const mp=card.querySelector('.cv-mp');
+    if(m.poster&&mp&&!mp.querySelector('img'))mp.innerHTML='<img src="'+esc(m.poster)+'" alt="" loading="lazy">';
+    const yr=m.year?(' · '+m.year):''; const vote=m.vote?(' · ★'+Number(m.vote).toFixed(1)):'';
+    s.innerHTML='<a href="'+esc(m.tmdb_url)+'" target="_blank" rel="noopener" style="color:#7dd3fc;text-decoration:none">'+esc(m.title||t)+yr+vote+' ↗</a>';
+    card.setAttribute('data-url',m.tmdb_url||'');
+    card.title=(m.overview||m.title||'');
+    card.onclick=function(e){ if(e.target.tagName==='A')return; if(this.dataset.url)window.open(this.dataset.url,'_blank'); };
+  }else{
+    s.textContent=(m&&m.hint)?'海报暂不可用（TMDB代理）':'TMDB 未匹配';
+    if(m&&m.hint)card.title=m.hint;
+  }
+}
+function cvMediaWallRender(d){
+  const el=document.getElementById('cv_mediawall'); if(!el)return;
+  const fs=((d.folder_stats||{}).detail||[]).filter(x=>x.folder&&x.folder!=='(根)');
+  if(!fs.length){ el.innerHTML='<div class="sub">暂无媒体文件夹</div>'; return; }
+  el.innerHTML='<div class="nd-mini" style="margin-bottom:9px">🎬 媒体封面 · Media Wall（点击跳转 TMDB）</div>'
+    +'<div class="cv-mw">'+fs.map(f=>{
+      const t=_cvTitleFromFolder(f.folder);
+      return '<div class="cv-mc" id="cv_mc_'+cvHash(t)+'">'
+        +'<div class="cv-mp"><span class="cv-mph">'+(t||'?')+'</span></div>'
+        +'<div class="cv-mt">'+esc(t||f.folder)+'</div>'
+        +'<div class="cv-ms" data-folder="'+esc(f.folder)+'">读取 TMDB…</div></div>';
+    }).join('')+'</div>';
+  // ★ 同步回填：缓存命中直接画（避免 3s 定时重建 DOM 造成的异步竞态）
+  fs.forEach(f=>{
+    const t=_cvTitleFromFolder(f.folder);
+    const cached=CV.media.get(t);
+    const card=document.getElementById('cv_mc_'+cvHash(t));
+    if(cached){ _cvPaintMeta(card,cached,t); return; }
+    cvMetaOne(f.folder).then(m=>_cvPaintMeta(document.getElementById('cv_mc_'+cvHash(t)),m,t));
+  });
+}
+function cvHash(s){ let h=0; for(let i=0;i<String(s).length;i++)h=(h*31+String(s).charCodeAt(i))|0; return 'm'+Math.abs(h); }
+function cvFoldersRender(d){
+  const el=document.getElementById('cv_folders'); if(!el)return;
+  const st=(d.folder_stats||{}), fs=st.detail||[];
+  if(!fs.length){ el.innerHTML='<div class="sub">暂无文件夹统计</div>'; return; }
+  el.innerHTML='<div class="nd-mini" style="margin-bottom:9px">📁 文件夹维度 · 共 <b>'+(st.folders||fs.length)+'</b> 个目录</div>'
+    +'<table class="nd-tbl"><thead><tr><th>文件夹（原目录结构）</th><th>文件</th><th>✅完成</th><th>◌转换中</th><th>⏳排队</th><th>✗失败</th><th>容量</th></tr></thead><tbody>'
+    +fs.map(f=>'<tr><td class="nd-mini" title="'+esc(f.folder)+'" style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(f.folder)+'</td>'
+      +'<td>'+f.total+'</td><td style="color:#34d399">'+f.done+'</td><td style="color:#fbbf24">'+f.running+'</td>'
+      +'<td>'+f.queued+'</td><td style="color:#f87171">'+f.failed+'</td><td class="nd-mini">'+ndSize(f.bytes)+'</td></tr>').join('')
+    +'</tbody></table>';
+}
+
 function cvRowKey(x){ return x.rel+'|'+x.size; }
 function cvRowsRender(d){
   if(!d)return;
@@ -34481,7 +34568,7 @@ async function renderCvRecords(){
       +'<span class="sep"></span><button class="btn sm" onclick="recExport()">⬇ 导出 CSV</button>'
       +'<button class="btn sm" onclick="cvLoad()">↻ 刷新</button></div>'
       +'<div style="max-height:480px;overflow:auto"><table class="nd-tbl"><thead><tr>'
-      +'<th>入队时间</th><th>完成时间</th><th>文件</th><th>大小</th><th>结果</th><th>耗时(精确)</th><th>类型</th><th>秒传</th><th>落地 115 去向 / 说明</th>'
+      +'<th>封面</th><th>入队时间</th><th>完成时间</th><th>文件</th><th>大小</th><th>结果</th><th>耗时(精确)</th><th>类型</th><th>秒传</th><th>落地 115 去向 / 说明</th>'
       +'</tr></thead><tbody id="rec_rows"></tbody></table></div></div>'
     +'</div>';
   ndBind(recLoad,15000);
@@ -34500,6 +34587,7 @@ function recRender(){
       .map(x=>'<div class="k"><div class="lab">'+x[0]+'</div><b>'+x[1]+'</b><div class="foot">'+x[2]+'</div></div>').join('')+'</div>';
   const el=document.getElementById('rec_rows'); if(!el)return;
   el.innerHTML=list.length?list.map(x=>'<tr>'
+    +'<td class="cv-rec-poster" data-rel="'+esc(x.rel||'')+'">—</td>'
     +'<td class="nd-mini">'+esc(x.queued_at||ndSec(x.ts))+'</td>'
     +'<td class="nd-mini">'+esc(x.finished_at||x.began_at||ndSec(x.ts))+'</td>'
     +'<td><div style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(x.rel||'')+'">'+esc(x.rel||'')+'</div></td>'
@@ -34507,7 +34595,18 @@ function recRender(){
     +'<td class="nd-mini" title="'+(x.duration_s||x.duration||0)+' 秒">'+ndDurSec(x.duration_s||x.duration)+'</td><td class="nd-mini">'+(x.manual?'手动':'自动')+'</td>'
     +'<td>'+(x.rapid?'<span class="nd-pill ok">⚡ 命中</span>':'<span class="nd-pill off">实传</span>')+'</td>'
     +'<td class="nd-mini" style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(x.dest||x.msg||'')+'">'+(x.ok?'<span style="color:#34d399">📂 '+esc(x.dest||('115/待整理/转换/夸克/'+String(x.rel||'').split('/').slice(0,-1).join('/')))+'</span><br>':'')+esc(x.msg||'—')+(x.deleted_src?' · 🗑源已删':'')+'</td></tr>').join('')
-    :'<tr><td colspan="9"><div class="nd-empty">暂无匹配记录</div></td></tr>';
+    :'<tr><td colspan="10"><div class="nd-empty">暂无匹配记录</div></td></tr>';
+  // ★ V1.56 异步填任务记录封面（同目录共享缓存）
+  setTimeout(()=>{
+    document.querySelectorAll('.cv-rec-poster').forEach(td=>{
+      const rel=td.getAttribute('data-rel')||'';
+      const folder=rel.split('/').slice(0,-1).join('/');
+      cvMetaOne(folder).then(m=>{
+        if(m&&m.ok&&m.poster)td.innerHTML='<img src="'+esc(m.poster)+'" alt="" style="width:34px;height:48px;object-fit:cover;border-radius:3px">';
+        else if(m&&m.ok&&m.tmdb_url)td.innerHTML='<a href="'+esc(m.tmdb_url)+'" target="_blank" title="'+esc(m.title||'')+'">🎬</a>';
+      });
+    });
+  },50);
 }
 function recExport(){
   const d=window.__recD||{}; const rows=d.history||[];
@@ -55032,7 +55131,9 @@ function v3Arch(){
       {id:'synchub',note:'同步画像'},{id:'cloudcookie',note:'Cookie 云同步'}]},
     {label:'☁️ 网盘中心',desc:'115 / CloudDrive2 / OpenList 统一管理（网盘唯一一级入口）',primary:'netdisk',items:[
       {id:'nd_cloud',note:'CloudDrive2 服务详情'},{id:'nd_openlist',note:'OpenList 服务详情'},
-      {id:'nd_browse',note:'115 与夸克文件浏览'},{id:'nd_health',note:'链路健康检查'}]},
+      {id:'nd_browse',note:'115 与夸克文件浏览'},{id:'nd_health',note:'链路健康检查'},
+      {id:'cv_console',note:'🎛️ 转换控制台（夸克→115）'},{id:'cv_manual',note:'✋ 手动转换'},
+      {id:'cv_records',note:'📜 转换任务记录'},{id:'cv_settings',note:'⚙️ 转换设置'}]},
     {label:'🎬 媒体运营',desc:'实时观看 / 播放统计 / 排行榜 / 媒体库',primary:'plays',items:[
       {id:'library',note:'媒体库浏览'},
       {id:'embyfix',note:'Emby 精密控制台'},{id:'kg_mdc',note:'MDC-NG 刮削'},
@@ -55042,9 +55143,7 @@ function v3Arch(){
     {label:'⚙️ 自动化中心',desc:'任务 / 定时 / 规则 / Webhook / 事件',primary:'mtctl',items:[
       {id:'mt',note:'MT 整理主控制台'},{id:'auto',note:'自动建整理方案'},
       {id:'mtbox',note:'MT 工具箱'},{id:'priority',note:'求片抢占优先级'},
-      {id:'mtdiag',note:'错误诊断与修复'},{id:'subsync',note:'字幕同步'},
-      {id:'cv_console',note:'转换控制台'},{id:'cv_manual',note:'手动转换'},
-      {id:'cv_records',note:'转换历史'},{id:'cv_settings',note:'转换设置'}]},
+      {id:'mtdiag',note:'错误诊断与修复'},{id:'subsync',note:'字幕同步'}]},
     {label:'🧩 插件中心',desc:'插件市场 / 已安装 / SDK / 权限 / 运行状态',primary:'v3',items:[
       {id:'naming',note:'自动命名（插件化）'},{id:'db',note:'数据库管理'}]},
     {label:'📊 数据中心',desc:'统计 / 聚合 / 历史 / 导出',primary:'pt',items:[
