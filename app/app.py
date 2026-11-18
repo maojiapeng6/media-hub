@@ -23192,7 +23192,7 @@ def q_put(key, val):
 # 秒传真相：115「秒传」只在 115 云端已存在相同 SHA1 时成立；夸克与 115 哈希库
 #       不共享，跨盘不存在直接秒传，未命中即完整实传（夸克侧限速）。
 Q2F_OL = 'http://{{MH_NAS_IP}}:5244'          # 可用 cfg q2f_ol_base 覆盖
-Q2F_SRC = '/夸克/夸克中转'
+Q2F_SRC = '/夸克'   # ★ V1.54：监控整个夸克网盘，rel 自带一级目录，投递保留原目录结构
 Q2F_DST = '/115/待整理/转换/夸克'
 Q2F_CD2 = '/CloudNAS/115open/待整理/转换/夸克'
 Q2F_TMP = '/dockroot/media-hub/q2f_tmp'
@@ -23213,7 +23213,7 @@ Q2F_DEFAULT_SETTINGS = {
     'mt_after': False,       # 全部完成后自动创建 MT 任务组
     'notify': True,          # 完成后 TG 播报
     'keep_days': 30,         # 记录保留天数
-    'delete_after': True,    # ★ 转换成功投递 115 后，自动删除夸克中转源文件
+    'delete_after': True,    # ★ 转换成功投递 115 后，自动删除夸克网盘源文件（开放平台 API 直删，不经 App 回收站）
     'src': Q2F_SRC, 'dst': Q2F_DST, 'cd2': Q2F_CD2, 'mt': Q2F_MT_SRC,
 }
 
@@ -23255,7 +23255,7 @@ def _q2f_del_after(s):
 
 
 def q2f_delete_source(rel):
-    """删除夸克中转源文件（OpenList QuarkOpen 挂载路径）。
+    """删除夸克网盘源文件（OpenList QuarkOpen 挂载路径，开放平台 API 直删不经回收站）。
     仅在转换成功投递 115/CD2 后调用；删除失败仅记录，不影响已完成状态。"""
     try:
         full = (Q2F_SRC.rstrip('/') + '/' + rel.lstrip('/'))
@@ -23263,7 +23263,7 @@ def q2f_delete_source(rel):
         nm = os.path.basename(full)
         r = q2f_api('POST', '/api/fs/remove', {'dir': d, 'names': [nm]}, t=25)
         if r.get('code') == 200:
-            return True, '已删夸克源 ✓'
+            return True, '已彻底删除夸克源（不经回收站）✓'
         return False, '删夸克源失败: ' + str(r.get('message'))[:80]
     except Exception as e:
         return False, '删夸克源异常: ' + str(e)[:80]
@@ -23600,7 +23600,7 @@ def q2f_worker():
                 cur['progress'] = 100
                 cur['bytes_xfer'] = cur['size']
                 cur['rapid'] = bool(rapid)
-                # ★ 转换成功投递 115 后，按设置删除夸克中转源文件
+                # ★ 转换成功投递 115 后，按设置删除夸克网盘源文件（开放平台直删，不经 App 回收站）
                 if _q2f_del_after(st):
                     try:
                         _dok, _dmsg = q2f_delete_source(cur['rel'])
@@ -30276,7 +30276,7 @@ class H(BaseHTTPRequestHandler):
         if u.path == '/api/q2f/scan':
             jid = submit('q2f.scan', lambda: q2f_scan(True))
             return self._j({'ok': True, 'async': True, 'job': jid,
-                            'msg': '已触发夸克中转扫描与入队（后台执行）'})
+                            'msg': '已触发整个夸克网盘扫描与入队（后台执行）'})
         if u.path == '/api/q2f/config':
             _s = q2f_state()
             if 'enabled' in b:

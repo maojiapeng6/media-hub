@@ -14062,7 +14062,7 @@ const NAV_DOMAINS = [
      {id:'nd_health', note:'链路健康检查 / 容量 / 最近错误'},
    ]},
 
-  {label:'🔄 转换', desc:'夸克中转 → 115 队列化转存（ETA/速度/进度/手动/记录/设置）',
+  {label:'🔄 转换', desc:'整个夸克网盘 → 115 队列化转存（保留原目录结构 / ETA/速度/进度/手动/记录/设置）',
    primary:'cv_console', items:[
      {id:'cv_manual', note:'勾选固定文件手动转换 / 预计耗时'},
      {id:'cv_records', note:'历史任务记录 / 统计 / 导出 CSV'},
@@ -33809,7 +33809,7 @@ async function ndHomeLoad(){
   }
   const fl=document.getElementById('nd_flow');
   if(fl){
-    const steps=[['SOURCE','夸克中转',d.src],['OPENLIST','QuarkOpen 取直链','refresh:true 列目录'],
+    const steps=[['SOURCE','夸克网盘',d.src],['OPENLIST','QuarkOpen 取直链','refresh:true 列目录'],
       ['TRANSFER','队列化下载 + 校验','进度 / 速度 / ETA'],['CLOUDDRIVE2','CD2 落地',d.cd2],
       ['TARGET','115 目标',d.dst]];
     fl.innerHTML='<div class="nd-flow">'+steps.map((s,i)=>'<div class="nd-step"><div class="n">'+s[0]+'</div>'
@@ -33979,7 +33979,7 @@ async function olDirLoad(){
   if(tree){
     const T=[['/','🏠 根'],['/115','☁️ 115 网盘'],['/115/待整理','📂 待整理'],
       ['/115/待整理/转换','🔄 转换'],['/115/待整理/转换/夸克','⭐ 夸克目标'],
-      ['/夸克','🗂️ 夸克网盘'],['/夸克/夸克中转','📥 夸克中转']];
+      ['/夸克','🗂️ 夸克网盘'],['/夸克/夸克中转','📥 夸克中转'],['/夸克/来自：分享','📤 来自分享']];
     tree.innerHTML='<div class="cap">存储与常用路径</div>'
       +T.map(x=>'<div class="it'+(OLBR.path===x[0]?' on':'')+'" onclick="olNav(\''+x[0]+'\')"><span class="ic">📁</span>'+x[1]+'</div>').join('')
       +'<div class="cap" style="margin-top:12px">当前子目录</div>'
@@ -34034,7 +34034,7 @@ async function brLoad(){
   const tree=document.getElementById('br_tree');
   if(tree){
     const T=[['/115','☁️ 115 网盘'],['/115/待整理','📂 待整理'],['/115/待整理/夸克','⭐ 夸克目标'],
-      ['/夸克','🗂️ 夸克网盘'],['/夸克/夸克中转','📥 夸克中转']];
+      ['/夸克','🗂️ 夸克网盘'],['/夸克/夸克中转','📥 夸克中转'],['/夸克/来自：分享','📤 来自分享']];
     tree.innerHTML='<div class="nd-mini" style="padding:4px 8px 8px">存储根节点</div>'
       +T.map(x=>'<div class="it'+(BR.path===x[0]?' on':'')+'" onclick="brNav(\''+x[0]+'\')">'+x[1]+'</div>').join('')
       +'<div class="nd-mini" style="padding:10px 8px 4px">当前路径</div><div class="nd-mono" style="padding:4px 8px;word-break:break-all">'+esc(BR.path)+'</div>';
@@ -34126,7 +34126,7 @@ async function ndHealthLoad(){
 async function renderCvConsole(){
   const v=document.getElementById('view'); if(!v)return;
   v.innerHTML='<div class="nd-wrap">'
-    +ndHead('🎛️ 转换控制台 · Conversion Console','夸克中转 → 115 / 待整理 / 夸克 · 队列化转换 / 实时 ETA / 手动干预')
+    +ndHead('🎛️ 转换控制台 · Conversion Console','整个夸克网盘 → 115 / 待整理 / 夸克（保留原目录结构）· 队列化转换 / 实时 ETA / 手动干预')
     +'<div class="card" id="cv_top"><div class="sub">读取中…</div></div>'
     +'<div class="card" id="cv_kpi"><div class="sub">读取中…</div></div>'
     +'<div class="card">'
@@ -34208,7 +34208,7 @@ async function cvLoad(){
     +'CD2 上传时若命中云端已有文件由其内部秒传，面板<b>不虚报命中数</b>（当前 '+d.rapid_hits+' 次）。<br><br>'
     +'<b>瓶颈</b>：夸克限速 + QuarkOpen only_proxy，下载需经 OpenList 本地代理；ETA 按实时速率（无任务时用历史平均）动态估算。';
   const fl=document.getElementById('cv_flow');
-  if(fl){const steps=[['SOURCE','夸克中转',d.src],['OPENLIST','取直链','refresh:true'],['QUEUE','队列调度','优先级 / 并发 / 限速'],
+  if(fl){const steps=[['SOURCE','夸克网盘',d.src],['OPENLIST','取直链','refresh:true'],['QUEUE','队列调度','优先级 / 并发 / 限速'],
     ['CLOUDDRIVE2','CD2 落地',d.cd2],['TARGET','115 目标',d.dst]];
     fl.innerHTML='<div class="nd-flow">'+steps.map((s,i)=>'<div class="nd-step"><div class="n">'+s[0]+'</div>'
       +'<div class="t">'+esc(s[1])+'</div><div class="d">'+esc(s[2])+'</div></div>'
@@ -34302,7 +34302,7 @@ async function cvMt(btn){
 async function renderCvManual(){
   const v=document.getElementById('view'); if(!v)return;
   v.innerHTML='<div class="nd-wrap">'
-    +ndHead('✋ 手动转换 · Manual Conversion','勾选夸克中转里的固定文件，指定后立即转换（不依赖自动扫描）')
+    +ndHead('✋ 手动转换 · Manual Conversion','勾选夸克网盘里的固定文件，指定后立即转换（不依赖自动扫描）')
     +'<div class="card" id="man_summary"><div class="sub">读取中…</div></div>'
     +'<div class="card">'
       +'<div class="nd-toolbar">'
@@ -34532,7 +34532,7 @@ async function setLoad(){
   const d=await ndStatus(); if(!d||!d.ok)return;
   const s=d.settings||{}; window.__setD=d;
   const F=[
-    ['auto','自动监控','checkbox','定时扫描夸克中转并自动入队；关闭后仅手动转换生效'],
+    ['auto','自动监控','checkbox','定时扫描整个夸克网盘（含来自分享/夸克中转等所有目录）并自动入队，保留原目录结构；关闭后仅手动转换生效'],
     ['interval','扫描周期（秒）','number','后台发现新文件的间隔，最小 30 秒'],
     ['concurrency','并发转换数','number','同时下载的文件数，夸克限速建议 1–2'],
     ['speed_limit','限速（MB/s）','number','0 = 不限速；用于避免占满上行带宽'],
@@ -34540,7 +34540,7 @@ async function setLoad(){
     ['mt_after','完成后自动创建 MT 任务组','checkbox','队列清空后自动为 115/待整理/夸克 创建整理方案'],
     ['notify','完成后播报通知','checkbox','全部完成后推送一次结果通知'],
     ['keep_days','记录保留天数','number','历史任务记录保留时长'],
-    ['delete_after','完成后删除夸克源文件','checkbox','转换成功投递 115 后，自动删除夸克中转里的源文件（释放夸克空间）；关闭则仅转换不删源'],
+    ['delete_after','完成后彻底删除夸克源文件','checkbox','转换成功投递 115 后，自动删除夸克网盘里对应的源文件（开放平台 API 直删，不经回收站，立即释放夸克空间）；关闭则仅转换不删源'],
   ];
   const form=document.getElementById('set_form');
   if(form)form.innerHTML=F.map(f=>{
