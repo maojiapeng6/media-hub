@@ -33690,6 +33690,8 @@ function ndSize(b){ b=Number(b||0); if(!b)return '0 B';
 function ndSpd(b){ return ndSize(Number(b||0))+'/s'; }
 function ndTime(ts){ if(!ts)return '—'; try{return new Date(ts*1000).toLocaleString('zh-CN',{hour12:false});}catch(e){return '—';} }
 function ndClock(ts){ if(!ts)return '—'; try{return new Date(ts*1000).toLocaleTimeString('zh-CN',{hour12:false});}catch(e){return '—';} }
+function ndSec(ts){ if(!ts)return '—'; try{const d=new Date(ts*1000),p=n=>String(n).padStart(2,'0');return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());}catch(e){return '—';} }
+function ndDurSec(s){ s=Number(s||0); if(!s)return '—'; if(s<60)return s.toFixed(1)+' 秒'; if(s<3600)return Math.floor(s/60)+' 分 '+(s%60).toFixed(1)+' 秒'; return Math.floor(s/3600)+' 时 '+Math.floor((s%3600)/60)+' 分 '+(s%60).toFixed(0)+' 秒'; }
 function ndDur(s){ s=Number(s||0); if(!s)return '—'; if(s<60)return s.toFixed(0)+' 秒';
   if(s<3600)return Math.floor(s/60)+' 分 '+Math.round(s%60)+' 秒';
   return Math.floor(s/3600)+' 时 '+Math.floor((s%3600)/60)+' 分'; }
@@ -34129,12 +34131,16 @@ async function renderCvConsole(){
     +ndHead('🎛️ 转换控制台 · Conversion Console','整个夸克网盘 → 115 / 待整理 / 夸克（保留原目录结构）· 队列化转换 / 实时 ETA / 手动干预')
     +'<div class="card" id="cv_top"><div class="sub">读取中…</div></div>'
     +'<div class="card" id="cv_kpi"><div class="sub">读取中…</div></div>'
+    +ndCard('📍 转换去向 · 文件落地说明','<div class="nd-note" id="cv_dest_note">'
+      +'<b>链路</b>：夸克网盘 <code>/夸克/**</code>（保留原目录结构）→ OpenList 直链 → 投递 <code>115/待整理/转换/夸克/**</code> → 投递成功后<b>立即彻底删除夸克源文件</b>（开放平台直删，不经回收站）。<br>'
+      +'<b>⚠️ 落地后被搬走？</b>：若你看到文件没留在「转换/夸克」，是因为 <b>MT 自动整理方案</b>（realtimeMode=polling）在文件落地瞬间把它按规则整理到了 <code>115/KFC/云盘影视/{电影,电视剧,动漫,…}</code>。这是下游整理在正常工作，不是转换失败 —— 在下方<b>任务记录</b>的「落地 115 去向」列可逐条核对。'
+      +'</div>')
     +'<div class="card">'
       +'<div class="nd-toolbar" id="cv_tools"></div>'
       +'<div style="max-height:520px;overflow:auto"><table class="nd-tbl"><thead><tr>'
       +'<th><input type="checkbox" class="nd-chk" id="cv_all" onchange="cvSelAll(this.checked)"></th>'
       +'<th>优先</th><th>文件</th><th>大小</th><th>SHA1</th><th>状态</th><th>进度</th><th>已传 / 总量</th>'
-      +'<th>速度</th><th>单项 ETA</th><th>耗时</th><th>开始时间</th><th>操作</th>'
+      +'<th>速度</th><th>单项 ETA</th><th>耗时</th><th>入队时间</th><th>开始时间</th><th>完成时间</th><th>操作</th>'
       +'</tr></thead><tbody id="cv_rows"></tbody></table></div>'
       +'<div class="row" style="gap:8px;flex-wrap:wrap;margin-top:9px"><span class="nd-mini" id="cv_tbl_note"></span></div>'
     +'</div>'
@@ -34246,8 +34252,10 @@ function cvRowsRender(d){
       +'<td class="nd-mini">'+ndSize(x.bytes_xfer||0)+' / '+ndSize(x.size)+'</td>'
       +'<td class="nd-mini">'+(x.status==='running'?ndSpd(x.speed):'—')+'</td>'
       +'<td class="nd-mini">'+(x.status==='running'?ndEta(x.eta):'—')+'</td>'
-      +'<td class="nd-mini">'+((x.status==='running')?ndDur(x.elapsed):ndDur(x.duration))+'</td>'
-      +'<td class="nd-mini">'+(x.began_at?esc(x.began_at):ndClock(x.started||x.queued_ts))+'</td>'
+      +'<td class="nd-mini" title="精确 '+(x.duration_s||x.duration||0)+' 秒">'+((x.status==='running')?ndDurSec(x.elapsed):ndDurSec(x.duration_s||x.duration))+'</td>'
+      +'<td class="nd-mini">'+esc(x.queued_at||ndSec(x.queued_ts))+'</td>'
+      +'<td class="nd-mini">'+esc(x.began_at||ndSec(x.started))+'</td>'
+      +'<td class="nd-mini">'+esc(x.finished_at||ndSec(x.finished))+'</td>'
       +'<td style="white-space:nowrap">'
       +'<button class="btn sm" onclick="cvOne(\''+esc(k)+'\',\'priority\',1)" title="提高优先级">⬆</button> '
       +'<button class="btn sm" onclick="cvOne(\''+esc(k)+'\',\'priority\',0)" title="降低优先级">⬇</button> '
@@ -34255,7 +34263,7 @@ function cvRowsRender(d){
       +(x.status==='failed'||x.status==='cancelled'?'<button class="btn sm" onclick="cvOne(\''+esc(k)+'\',\'retry\')">↻</button> ':'')
       +(x.status==='done'?'<button class="btn sm" onclick="cvOne(\''+esc(k)+'\',\'reforce\')">⟳ 重转</button>':'')
       +'</td></tr>';
-  }).join(''):'<tr><td colspan="13"><div class="nd-empty">该筛选下暂无任务</div></td></tr>';
+  }).join(''):'<tr><td colspan="15"><div class="nd-empty">该筛选下暂无任务</div></td></tr>';
   const sn=document.getElementById('cv_seln'); if(sn)sn.textContent=CV.sel.size;
 }
 function cvLogRender(d){
@@ -34473,7 +34481,7 @@ async function renderCvRecords(){
       +'<span class="sep"></span><button class="btn sm" onclick="recExport()">⬇ 导出 CSV</button>'
       +'<button class="btn sm" onclick="cvLoad()">↻ 刷新</button></div>'
       +'<div style="max-height:480px;overflow:auto"><table class="nd-tbl"><thead><tr>'
-      +'<th>开始时间</th><th>文件</th><th>大小</th><th>结果</th><th>耗时</th><th>类型</th><th>秒传</th><th>说明</th>'
+      +'<th>入队时间</th><th>完成时间</th><th>文件</th><th>大小</th><th>结果</th><th>耗时(精确)</th><th>类型</th><th>秒传</th><th>落地 115 去向 / 说明</th>'
       +'</tr></thead><tbody id="rec_rows"></tbody></table></div></div>'
     +'</div>';
   ndBind(recLoad,15000);
@@ -34491,20 +34499,22 @@ function recRender(){
       ['平均速率',ndSpd(d.avg_speed||0),''],['峰值速率',ndSpd((d.stats||{}).peak_speed||0),''],['秒传命中',d.rapid_hits||0,'次']]
       .map(x=>'<div class="k"><div class="lab">'+x[0]+'</div><b>'+x[1]+'</b><div class="foot">'+x[2]+'</div></div>').join('')+'</div>';
   const el=document.getElementById('rec_rows'); if(!el)return;
-  el.innerHTML=list.length?list.map(x=>'<tr><td class="nd-mini">'+(x.began_at?esc(x.began_at):ndTime(x.ts))+'</td>'
+  el.innerHTML=list.length?list.map(x=>'<tr>'
+    +'<td class="nd-mini">'+esc(x.queued_at||ndSec(x.ts))+'</td>'
+    +'<td class="nd-mini">'+esc(x.finished_at||x.began_at||ndSec(x.ts))+'</td>'
     +'<td><div style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(x.rel||'')+'">'+esc(x.rel||'')+'</div></td>'
     +'<td>'+ndSize(x.size)+'</td><td>'+(x.ok?'<span class="nd-pill ok">✓ 成功</span>':'<span class="nd-pill err">✗ 失败</span>')+'</td>'
-    +'<td class="nd-mini">'+ndDur(x.duration)+'</td><td class="nd-mini">'+(x.manual?'手动':'自动')+'</td>'
+    +'<td class="nd-mini" title="'+(x.duration_s||x.duration||0)+' 秒">'+ndDurSec(x.duration_s||x.duration)+'</td><td class="nd-mini">'+(x.manual?'手动':'自动')+'</td>'
     +'<td>'+(x.rapid?'<span class="nd-pill ok">⚡ 命中</span>':'<span class="nd-pill off">实传</span>')+'</td>'
-    +'<td class="nd-mini">'+esc(x.msg||'—')+(x.deleted_src?' · 🗑源已删':'')+'</td></tr>').join('')
-    :'<tr><td colspan="8"><div class="nd-empty">暂无匹配记录</div></td></tr>';
+    +'<td class="nd-mini" style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(x.dest||x.msg||'')+'">'+(x.ok?'<span style="color:#34d399">📂 '+esc(x.dest||('115/待整理/转换/夸克/'+String(x.rel||'').split('/').slice(0,-1).join('/')))+'</span><br>':'')+esc(x.msg||'—')+(x.deleted_src?' · 🗑源已删':'')+'</td></tr>').join('')
+    :'<tr><td colspan="9"><div class="nd-empty">暂无匹配记录</div></td></tr>';
 }
 function recExport(){
   const d=window.__recD||{}; const rows=d.history||[];
   if(!rows.length){toast('暂无记录可导出','err',3000);return;}
-  const head=['完成时间','文件','大小(字节)','结果','耗时(秒)','类型','秒传','说明'];
+  const head=['入队时间','开始时间','完成时间','文件','大小(字节)','结果','耗时(秒)','类型','秒传','落地115路径','说明'];
   const esc2=v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"';
-  const csv=[head.map(esc2).join(',')].concat(rows.map(x=>[ndTime(x.ts),x.rel,x.size,x.ok?'成功':'失败',x.duration,x.manual?'手动':'自动',x.rapid?'是':'否',x.msg||''].map(esc2).join(','))).join('\n');
+  const csv=[head.map(esc2).join(',')].concat(rows.map(x=>[x.queued_at||'',x.began_at||'',x.finished_at||ndSec(x.ts),x.rel,x.size,x.ok?'成功':'失败',x.duration_s||x.duration||0,x.manual?'手动':'自动',x.rapid?'是':'否',x.dest||'',x.msg||''].map(esc2).join(','))).join('\n');
   const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
   a.download='q2f_history_'+new Date().toISOString().slice(0,10)+'.csv'; a.click();

@@ -23352,7 +23352,9 @@ def _q2f_new_item(f, manual=False, priority=0, force=False):
             'speed': 0, 'eta': 0, 'priority': priority, 'force': bool(force),
             'retry': 0, 'manual': manual, 'rapid': False,
             'queued_ts': time.time(), 'ts': time.time(), 'started': 0,
-            'finished': 0, 'duration': 0, 'began_at': '', 'msg': ''}
+            'finished': 0, 'duration': 0, 'began_at': '', 'msg': '',
+            'queued_at': time.strftime('%Y-%m-%d %H:%M:%S'),
+            'finished_at': '', 'dest': ''}
 
 
 def q2f_enqueue(files, manual=False, force=False, priority=0):
@@ -23589,6 +23591,8 @@ def q2f_worker():
                 continue
             cur['finished'] = time.time()
             cur['duration'] = round(cur['finished'] - (cur['started'] or cur['finished']), 1)
+            cur['duration_s'] = round(cur['duration'], 1)
+            cur['finished_at'] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(cur['finished'])) if cur.get('finished') else ''
             cur['speed'] = 0
             cur['eta'] = 0
             cur['msg'] = msg
@@ -23614,8 +23618,13 @@ def q2f_worker():
                 st['history'] = ([dict(rel=cur['rel'], size=cur['size'], ok=True,
                                        duration=cur['duration'], ts=cur['finished'],
                                        began_at=cur.get('began_at') or '',
+                                       queued_at=cur.get('queued_at') or '',
+                                       finished_at=cur.get('finished_at') or '',
+                                       duration_s=cur.get('duration_s') or cur['duration'],
+                                       dest=cur.get('dest') or '',
                                        deleted_src=bool(cur.get('deleted_src')),
-                                       rapid=bool(rapid), manual=bool(cur.get('manual')))]
+                                       rapid=bool(rapid), manual=bool(cur.get('manual')),
+                                       msg=cur.get('msg') or '')]
                                  + st['history'])[:500]
                 st['stats']['total_runs'] = (st['stats'].get('total_runs') or 0) + 1
                 st['stats']['total_elapsed'] = (st['stats'].get('total_elapsed') or 0) + cur['duration']
@@ -23633,6 +23642,10 @@ def q2f_worker():
                     cur['status'] = 'failed'
                     st['history'] = ([dict(rel=cur['rel'], size=cur['size'], ok=False,
                                            duration=cur['duration'], ts=cur['finished'],
+                                           began_at=cur.get('began_at') or '',
+                                           queued_at=cur.get('queued_at') or '',
+                                           finished_at=cur.get('finished_at') or '',
+                                           duration_s=cur.get('duration_s') or cur['duration'],
                                            msg=msg, manual=bool(cur.get('manual')))]
                                      + st['history'])[:500]
             q2f_save(st)
@@ -23887,6 +23900,15 @@ def q2f_status():
         y['began_at'] = x.get('began_at') or (
             time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(x['started']))
             if x.get('started') else '')
+        # ★ V1.55 精确时间线：入队 / 开始 / 完成（YYYY-MM-DD HH:MM:SS）
+        y['queued_at'] = x.get('queued_at') or (
+            time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(x['queued_ts']))
+            if x.get('queued_ts') else '')
+        y['finished_at'] = x.get('finished_at') or (
+            time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(x['finished']))
+            if x.get('finished') else '')
+        y['duration_s'] = x.get('duration_s') or x.get('duration') or 0
+        y['dest'] = x.get('dest') or (Q2F_DST + '/' + x['rel'] if x.get('status') == 'done' else '')
         y['elapsed'] = round(_now - x['started'], 1) if (x.get('status') == 'running' and x.get('started')) else 0
         items_out.append(y)
     return {'ok': True, 'enabled': s.get('enabled', True), 'paused': s.get('paused', False),
