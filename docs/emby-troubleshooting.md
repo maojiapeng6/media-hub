@@ -78,6 +78,27 @@
 
 ---
 
+## EF-006 · 分组层复发：新剧又被吞进假「2010」（critical，2026-11-19）
+
+**背景**：EF-001 的根因 nfo 虽在 11-11 已移走（`.bak.20261111_narcos`），但 Emby 索引**已固化不自动降级**；只要假 Series「2010」(Id `3066062`) 还在，MT 新整理进来的剧**仍会被吞进去**。用户更新「风骚律师 (2015)」后搜索，结果全是 `2010 / S1:E2 / SeriesName=2010`。
+
+**现象 / 证据**：
+- 假「2010」仍在、下属 **600 个 Season**；风骚律师全部集 `SeriesId=3066062`
+- 分组层只剩 `.bak`，根因文件确实没了 → 纯索引层问题，磁盘文件一个不少
+- 风骚律师目录 **6 季 236 个 `.strm`** 完整，指向 115 实体（156 个 mkv）
+
+**修复（单剧立等可见，零文件改动）**：独立补录法（毒枭同款）
+1. 备份整目录到 `_backup_bcs_2015/`
+2. 在 `/strm/补录区/<剧目录>` 实体复制全部 strm（**symlink 不跟随**、去掉悬空海报链接）、写实体 `tvshow.nfo`（含 `tmdbid`）、复制实体海报
+3. 建独立媒体库（正确 body，见高频坑清单）→ 停卡死的 Scan 任务 → 重启 Emby → 对库根 Folder 做 `POST /Items/{FolderId}/Refresh?Recursive=true&FullRefresh`
+4. 实测：Series「风骚律师」`3403618`、**6 季 236 集**、TMDB `60059`、Primary 封面有、MediaSource 指向 115 真文件
+
+**这次踩的坑（已并入高频坑清单）**：先用 `?name=&paths=` query 建库 → 空壳；再用 body 建库但旧空壳没删 → 同时存在两个同名库，扫描器混乱、Folder 始终不生成、Scan 任务卡在 2.53% 数小时。**删掉空壳、只留一个 + 重启 + 定向 Folder Refresh 后 15 秒入库**。
+
+**局限**：这是**单剧补录**，不治本——假「2010」及同层其余 664 部剧仍是假季。根治须库级重建（方案 A′：PathExclusions 排除→扫描清索引→取消→重建→关 `SaveLocalMetadata`），属永久变更需用户点头。**严禁 `DELETE /Items/{Id}`**。
+
+---
+
 ## 高频坑清单
 
 | 坑 | 说明 |
@@ -85,7 +106,7 @@
 | `DELETE /Items/{Id}` | 删物理文件，不能当"清索引"用 |
 | 反复 `/Library/Refresh` | 取消并重启扫描任务 |
 | 目录 symlink | Emby **不跟随**，新目录必须实体文件 |
-| 新建库字段 | 用 `Paths`（不是 `Locations`）；补路径用 `POST /Library/VirtualFolders/Paths {Id,Path,RefreshLibrary}` |
+| 新建库字段 | **建库用 `POST /Library/VirtualFolders` + JSON body：`{Name,CollectionType,Locations:[path],RefreshLibrary:true}`**（`Locations` 是正确字段）。用 `?name=&paths=` query 参数会建出**空壳库**（显示路径但不扫描、Folder 不生成）；补路径才用 `POST /Library/VirtualFolders/Paths {Id,Path,RefreshLibrary}`。重建前先删空壳库，且**一次只能有一个同名库**，否则扫描器混乱 |
 | `SearchTerm` 带年份括号 | 假阴性，Series 名可能不带年份；用宽松词或按 TMDBID / Path 查 |
 | `GET /Items/{Id}` 不带 UserId | 404，改用 `/Items?Ids=...` 或 `ParentId` |
 | `glob` 与 `[tmdbid-xxxxx]` | 方括号被当字符类 → "0 个文件"是假阴性，用 `glob.escape()` 或 `os.walk` |
