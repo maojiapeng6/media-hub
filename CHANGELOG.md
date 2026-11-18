@@ -1,5 +1,11 @@
 # Changelog
 
+## [4.2.10] - 2026-11-19 · 假 Series「2010」整层根治（666 部剧）+ Web 吞噬检修（V1.58）
+
+- **根治 666 部剧**：假「2010」索引顽固（DELETE 逐个 FetchShortcutPath 读 strm 卡死、PathExclusions 字段实测不存在），改用「整层独立库法」——关 `SaveLocalMetadata=False` 防复发 → 目录 `mv` 出原库路径到 `/strm/欧美剧2010年代`（32849 strm 完好+备份）→ 建独立库（JSON body 不带 Locations + AddMediaPath 补路径）→ 重启 + Folder 递归 Refresh。**实测 666 部独立 Series**，TMDBID 全对
+- **Web V1.58「🕳️ 吞噬检修」tab**：分组层吞噬体检（假 Series 及吞剧数）、查某剧是否被吞（`SeriesName/SeriesId` 判定、被吞标红、单剧刷新、一键补录）、补录区状态；端点 `/api/embyfix/v2/{layers,swallow,rescue,rescue/status}`
+- 错误分析文档补根治方案 + V1.58 映射；修正 PathExclusions 误区
+
 ## [4.2.9] - 2026-11-19 · EMBY 错误分析补 EF-006（分组层复发 / 单剧独立补录法）+ 建库字段坑修正
 
 - 新增案例 **EF-006**：分组层假 Series「2010」索引固化不自动降级 → 新更新的剧（风骚律师 2015）又被吞成假季。给出单剧独立补录法（备份→实体 strm+nfo→建独立库→停卡死 Scan→重启→Folder 递归 Refresh），实测 6 季 236 集 / TMDB 60059 / 封面 / 115 播放链路全通

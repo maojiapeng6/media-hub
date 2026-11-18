@@ -95,7 +95,16 @@
 
 **这次踩的坑（已并入高频坑清单）**：先用 `?name=&paths=` query 建库 → 空壳；再用 body 建库但旧空壳没删 → 同时存在两个同名库，扫描器混乱、Folder 始终不生成、Scan 任务卡在 2.53% 数小时。**删掉空壳、只留一个 + 重启 + 定向 Folder Refresh 后 15 秒入库**。
 
-**局限**：这是**单剧补录**，不治本——假「2010」及同层其余 664 部剧仍是假季。根治须库级重建（方案 A′：PathExclusions 排除→扫描清索引→取消→重建→关 `SaveLocalMetadata`），属永久变更需用户点头。**严禁 `DELETE /Items/{Id}`**。
+**根治（2026-11-19 用户点头后执行，"整层独立库法"）**：单剧补录不治本，假「2010」索引顽固清不掉。**最终实测成功方案 = 把整层搬出原库路径 + 建独立库重建**，666 部剧一次性恢复为独立 Series：
+1. 关 `SaveLocalMetadata=False`（`POST /Library/VirtualFolders/LibraryOptions {Id,LibraryOptions}`）——**防复发关键**，Emby 不再往磁盘写层 nfo
+2. 把 `2010-2019` 目录**改名再移出**欧美剧库路径 → `/strm/欧美剧2010年代`（`mv`，不动任何文件；32849 个 strm 全程完好、已备份）
+3. 建库：`POST /Library/VirtualFolders {Name,CollectionType:tvshows}`（**不要带 Locations**，会建空壳库；旧空壳没删+新库并存会让扫描器混乱、Scan 卡 2.53%）→ 再 `POST /Library/VirtualFolders/Paths {Id,Path,RefreshLibrary:true}` 补路径
+4. 重启 Emby → `POST /Items/{FolderId}/Refresh?Recursive=true&FullRefresh` → 等约 5 分钟
+5. 实测 **666 部独立 Series**（= 基线剧目录数），TMDBID 全对、抽样剧名全是独立剧，季/集后台持续填充
+
+**为何 DELETE /Items/{Id} 清不掉假索引**：Emby 删除 item 时逐个 `FetchShortcutPath` 读 strm 指向的媒体，旧路径不存在 → 大量 `DirectoryNotFoundException` → 删除卡死。所以根治靠**重建新库**而非清旧索引；假「2010」旧 item 成无物理依托的历史残留（不影响新库）。**严禁对有物理依托的 item 用 DELETE**（连文件一起删）。
+
+**Web 支撑（V1.58）**：`📺 Emby → 🩺 故障检修 → 🕳️ 吞噬检修` 新增：① 分组层吞噬体检（列出假 Series，如 `2010 / 600 季`）；② 查某剧是否被吞（显示 `SeriesName/SeriesId`，被吞标红，附单剧刷新 + 补录按钮）；③ 补录区状态。端点 `/api/embyfix/v2/{layers,swallow,rescue,rescue/status}`。
 
 ---
 
