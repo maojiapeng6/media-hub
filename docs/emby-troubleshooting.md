@@ -106,6 +106,28 @@
 
 **Web 支撑（V1.58）**：`📺 Emby → 🩺 故障检修 → 🕳️ 吞噬检修` 新增：① 分组层吞噬体检（列出假 Series，如 `2010 / 600 季`）；② 查某剧是否被吞（显示 `SeriesName/SeriesId`，被吞标红，附单剧刷新 + 补录按钮）；③ 补录区状态。端点 `/api/embyfix/v2/{layers,swallow,rescue,rescue/status}`。
 
+### 最终治本 v2：DB 改 `type`（2026-11-19，用户要求"回原位置"后）
+
+上法（整层独立库）虽恢复剧集，但**剧不在原库路径**、假「2010」仍作为残留存在，用户不接受。深挖 Emby `library.db`（4.27GB，SQLite）找到**真正根因**：
+
+- Emby 4.10 媒体项表是 **`MediaItems`**（不是 `Items`），类型字段 `type`：`3=Folder`、`6=Series`、`7=Season`、`8=Episode`
+- 所有正常年代层（2020-2030/2000-2009…）Path 都是 `type=3` Folder；**唯独 `2010-2019` 是 `type=6` Series**——其他字段（ParentId/PresentationUniqueKey/ProviderIds）完全一样。Emby 就是靠这一个 `type` 值区分层是"文件夹"还是"一部剧"
+- 只要 `type=6`，无论怎么删 nfo、删子树、重扫，Emby 都会把它重建为假剧；`DELETE /Items/{Id}` 又会因逐集 FetchShortcutPath 读 strm 而卡死
+
+**决定性修复（保留原路径，剧回到正确位置）**：
+1. **在线备份**：`sqlite3.connect(src).backup(dst)`（9.6s 一致快照，不停服）
+2. **停 Emby** → 打开 `library.db`（`PRAGMA foreign_keys=OFF`）：
+   - 递归 CTE 找出假 Series（如 `Id=3441055`）整棵子树，`MediaItems` + `MediaStreams2`/`ItemLinks2`/`ItemPeople2`/`UserItemShares`/`ItemExtradata`/`SyncJobItems2` 按 `ItemId IN (...)` 分批删（800/批，避开变量上限）
+   - **关键一句**：`UPDATE MediaItems SET type=3, Name='2010-2019', PresentationUniqueKey=NULL WHERE Id=<假SeriesId>` —— 把根行从 Series 改回 Folder
+   - `commit()` + `PRAGMA wal_checkpoint(TRUNCATE)` + 回读验证
+3. **启 Emby** → 库根已显示 `2010-2019` 为 **Folder** ✅
+4. 对 Folder 发 **666 个剧目录的 `POST /Library/Media/Updated {Updates:[{Path,UpdateType:Created}]}`**（分批 40/批）→ **45 秒内 666 部独立 Series 全部入库**
+5. 季/集由全库扫描异步填充（每集连 115 探测，固有慢）；期间**不要反复停启动扫描**（会从头排队）
+
+**实测**：假剧 `2010`=0、`2010-2019`=Folder、层内独立剧 **666**、32849 strm 完好、风骚律师在原路径 `2010-2019/风骚律师 (2015) [tmdbid-60059]`、TMDB `60059`。
+
+**为何用 Created 通知而非扫描建 Series**：Emby 增量通知不导入新文件（Season/Episode 级无效），但对**已存在的目录项**（剧目录）发 Created 能让实时监控秒级建 Series——这正是 666 剧秒级入库的关键。
+
 ---
 
 ## 高频坑清单
@@ -122,6 +144,9 @@
 | 网盘全盘 `find` | 超时；限定目录或从 `.strm` 内容反推精确路径再 `stat` |
 | 新 CSS 插入位置 | 独立 `<style>` 放 `</head>` 前，别插进未闭合 `@media` |
 | 新仪表盘卡 | 必须登记布局注册表，否则会排到顶部区之上 |
+| Emby 4.10 媒体表 | 是 `MediaItems`（不是 `Items`）；`type` 字段 `3=Folder / 6=Series / 7=Season / 8=Episode` |
+| 假剧清不掉（type=6） | 删 nfo/删子树/重扫都无效，`DELETE /Items` 又卡在逐集读 strm；**正解 = 停服改 DB `type` 6→3 + 清子树 + checkpoint**，再对剧目录发 Created 通知秒级重建 |
+| 季集不导入 | Created 通知只对已存在目录项（剧目录）建 Series 有效；Season/Episode 级无效，须靠全库扫描异步填（且别反复停启） |
 
 ---
 
