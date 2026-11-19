@@ -38648,6 +38648,18 @@ async function renderKeepalive(){
   // ★★ 2026-11-06 MP 站点数据卡（用户要求：每站上传/下载/分享率/魔力/等级/做种）
   v.insertAdjacentHTML('afterbegin','<div class="card" id="ka_sites"><h3>📊 站点数据 · 实时 <span class="tag">MP 当场重抓 · 同步即实时 · 问题直显卡片</span></h3><div id="ka_sites_body"><div class="empty"><span class="spin"></span> 读取各站数据…</div></div></div>');
 
+  // ★ 2026-11-19 全站保号控制：刷新全部真实信息 + 自动监控达标开关
+  v.insertAdjacentHTML('afterbegin', '<div class="card" id="ka_auto_bar" style="margin-top:12px;border-color:rgba(34,197,94,.35)"><h3>🛰️ 全站保号控制 <span class="sub" style="font-weight:400;font-size:12px;color:var(--muted)">默认自动监控 · 未达标自动执行保号/辅种 · 也可手动</span></h3>'
+    +'<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">'
+    +'<button class="btn acc" onclick="ka4Sync(this)">🔄 刷新全部站点真实信息</button>'
+    +'<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="ka_auto_on" onchange="kaAutoToggle(this)"> <b>🤖 自动监控达标</b></label>'
+    +'<button class="btn sm" onclick="kaAutoRun(this)">▶️ 立即巡检一次</button>'
+    +'<span id="ka_auto_status" class="sub" style="color:var(--muted);font-size:12px">读取中…</span>'
+    +'</div>'
+    +'<div id="ka_auto_log" class="hint" style="font-size:11.5px;line-height:1.7;max-height:96px;overflow:auto">—</div>'
+    +'</div>');
+
+  kaAutoLoad();
   kaSitesLoad();
 
   if(KA_TIMER)clearInterval(KA_TIMER);
@@ -39002,6 +39014,41 @@ async function kaSeed(id,btn){
 }
 
 function kaRules(id){const el=document.getElementById('ka_rules_'+id);if(el)el.style.display=el.style.display==='none'?'block':'none';}
+
+// ★ 2026-11-19 自动监控达标：配置/开关/立即巡检/动作日志
+async function kaAutoLoad(){
+  try{
+    const r=await apiGet('/api/ka/auto',0);
+    const cb=document.getElementById('ka_auto_on');
+    if(cb&&r)cb.checked=!!r.enabled;
+    const st=document.getElementById('ka_auto_status');
+    if(st&&r){
+      const last=r.last_run?(new Date(r.last_run*1000).toLocaleTimeString('zh-CN')):'从未';
+      st.textContent='状态：'+(r.enabled?('● 运行中'):('○ 已关闭'))+' · 间隔 '+(r.interval/60).toFixed(0)+' 分钟 · 上次 '+last;
+      st.style.color=r.enabled?'var(--ok)':'var(--muted)';
+    }
+    const lg=document.getElementById('ka_auto_log');
+    if(lg&&r&&r.log&&r.log.length){
+      lg.innerHTML=r.log.slice(0,6).map(x=>'<div>· '+(x.ts?new Date(x.ts*1000).toLocaleTimeString('zh-CN')+' ':'')+esc(x.msg||'')+'</div>').join('');
+    }else if(lg){lg.innerHTML='<div class="sub">暂无自动动作记录（站点全部正常，或监控刚启动）。</div>';}
+  }catch(e){}
+}
+async function kaAutoToggle(cb){
+  try{
+    const r=await apiPost('/api/ka/auto',{enabled:cb.checked});
+    toast(r.ok?(cb.checked?'✅ 自动监控已开启（未达标自动执行保号/辅种）':'⛔ 自动监控已关闭'):(r.msg||'操作失败'),r.ok?'ok':'err');
+    await kaAutoLoad();
+  }catch(e){toast('操作失败：'+String(e).slice(0,60),'err');}
+}
+async function kaAutoRun(btn){
+  if(btn){btn.disabled=true;btn.textContent='⏳ 巡检中…';}
+  try{
+    const r=await apiPost('/api/ka/auto/run',{});
+    toast(r.msg||'已触发巡检',r.ok?'ok':'err');
+    setTimeout(async()=>{await kaAutoLoad();},4000);
+  }catch(e){toast('巡检失败：'+String(e).slice(0,60),'err');}
+  finally{if(btn){btn.disabled=false;btn.textContent='▶️ 立即巡检一次';}}
+}
 
 
 

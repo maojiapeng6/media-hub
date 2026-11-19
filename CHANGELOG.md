@@ -1,5 +1,22 @@
 # Changelog
 
+## [4.2.11] - 2026-11-19 · PT 保号自动监控达标 + 全站实时刷新 + 馒头加种自动化
+
+> 用户诉求：「保号任务改成自动监控，每个站点各自检查是否达标，没达标自动去达标，不要耗死（NicePT 死掉了）；外围页面加实时刷新，刷新所有 PT 站真实信息（保号/分享率等）；未达标可单独自动保号，默认自动监控 + 手动兜底；馒头下载 15G 过考核并认真刷上传/魔力，期限内留余量完成」。
+
+### 新功能：自动监控达标（默认开启）
+- **后端**（`app.py`）：新增 `_ka_auto_monitor_loop` 后台守护线程（启动 45s 后首跑，默认每 15 分钟巡检，间隔 5 分钟~24 小时可配），逐站调用 `keepalive_sites()` 判断达标状态，未达标自动执行：① `live_ok=false` → 重新实时探测（Cookie 过期站 cooldown 2 小时、其它 30 分钟，**防 NicePT 那种反复打站卡死**）；② 登录≥1 天 → 投 `ka_refresh` 信标保号（cooldown 1 小时）；③ `newbie_status=new/warn` → 置 `seed_kick` 自动辅种涨流量（cooldown 2 小时）。每站每动作独立 cooldown + 全程 try 保护 + 动作日志（`/data/ka_auto.json`），失败不阻塞其它站。
+- **端点**：`GET /api/ka/auto`（配置+运行状态+最近 20 条动作日志）、`POST /api/ka/auto`（enabled/interval 开关保存）、`POST /api/ka/auto/run`（手动触发一次巡检）。
+- **前端**（`index.html`）：保号页顶部新增「🛰️ 全站保号控制」卡——**🔄 刷新全部站点真实信息**（调已有 `/api/ka/sync`，MP 当场重抓+Bot 保号）、**🤖 自动监控达标**开关（默认开）、**▶️ 立即巡检一次**、状态行（运行中/间隔/上次时间）、最近动作日志。每站卡片原有「立即执行一次」「指定辅种」保留（手动兜底）。
+
+### 配套：馒头（M-Team 新版 SPA）加种自动化
+- 新增 `tools/mteam_seed_bot.py`：用已登录 EdgeClone profile 的 CDP 访问 `/detail/{tid}` 点下载 → 站点签发有效 .torrent（新版无 passkey、credential 一次性无法伪造，只能浏览器点下载）→ 推 qB（tag=保号,馒头,时魔）做种刷上传/时魔。只选 FREE 小种（不计数下载、体积小做种魔力效率高），默认每轮 3 个间隔 8 秒防风控，手动触发。实机已加 4 个馒头种，qB success_count=1、tracker 有效、开始上传。
+- **考核真相（实测）**：馒头新手考核（至 2026-12-06）期间**官方禁用所有魔力加成**，故时魔增长慢是规则非 bug；FREE/PERCENT_50 折扣种下载**不计入考核下载量**（实测下完 13.2G 的 50% 种站点下载量仍 0），要过「下载>15G」须用 NORMAL 全额计数种。
+
+### 边界
+- 自动监控不自动登录/试密/改凭据；Cookie 过期的站（如 NicePT）只降频重探+告警，不反复打站，需用户在「Cookie 抓取中心」人工重抓。
+- 线上私有逻辑（读 `/dockroot/kfcgame/keepalive/secrets.json`）按相对路径入仓，无真实凭据；发布副本 `openrepo/app/{app.py,index.html}` 增量同步，隐私守门 blocking=0。
+
 ## [4.2.10] - 2026-11-19 · 假 Series「2010」整层根治（666 部剧）+ Web 吞噬检修（V1.58）
 
 - **根治 666 部剧**：假「2010」索引顽固（DELETE 逐个 FetchShortcutPath 读 strm 卡死、PathExclusions 字段实测不存在），改用「整层独立库法」——关 `SaveLocalMetadata=False` 防复发 → 目录 `mv` 出原库路径到 `/strm/欧美剧2010年代`（32849 strm 完好+备份）→ 建独立库（JSON body 不带 Locations + AddMediaPath 补路径）→ 重启 + Folder 递归 Refresh。**实测 666 部独立 Series**，TMDBID 全对

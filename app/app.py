@@ -14239,6 +14239,149 @@ def ka_seeds_detail(sid):
             'probe_txt': time.strftime('%F %T', time.localtime(ss.get('last_probe') or 0))}
 
 
+_KA_AUTO_PATH = '/data/ka_auto.json'
+_KA_AUTO_LOCK = __import__('threading').Lock()
+_KA_AUTO = {'running': False, 'last_run': 0, 'log': [], 'actions': {}}
+
+
+def _ka_auto_cfg():
+    """自动监控配置：enabled 默认 True，interval 秒，dry 默认 False。"""
+    d = {'enabled': True, 'interval': 900, 'dry': False}
+    try:
+        if os.path.exists(_KA_AUTO_PATH):
+            d.update(json.load(open(_KA_AUTO_PATH, encoding='utf-8')) or {})
+    except Exception:
+        pass
+    return d
+
+
+def _ka_auto_save(d):
+    try:
+        os.makedirs(os.path.dirname(_KA_AUTO_PATH), exist_ok=True)
+        tmp = _KA_AUTO_PATH + '.tmp'
+        json.dump(d, open(tmp, 'w', encoding='utf-8'), ensure_ascii=False)
+        os.replace(tmp, _KA_AUTO_PATH)
+        return True
+    except Exception:
+        return False
+
+
+def _ka_auto_log(msg):
+    try:
+        with _KA_AUTO_LOCK:
+            _KA_AUTO['log'].insert(0, {'ts': time.time(), 'msg': str(msg)[:200]})
+            del _KA_AUTO['log'][40:]
+    except Exception:
+        pass
+    logger.info('[KA-AUTO] %s', msg)
+
+
+def _ka_auto_action(sid, what, cooldown=1800):
+    """对单站执行自动动作，带 cooldown 防卡死（同站同动作 cooldown 秒内不重复）。"""
+    key = str(sid) + '|' + what
+    now = time.time()
+    last = float((_KA_AUTO['actions'] or {}).get(key) or 0)
+    if now - last < cooldown:
+        return False
+    _KA_AUTO.setdefault('actions', {})[key] = now
+    try:
+        if what == 'kick':
+            keepalive_kick(sid)
+        elif what == 'seed':
+            def _m(st):
+                st.setdefault('sites', {}).setdefault(sid, {})['seed_kick'] = now
+                return {'ok': True}
+            _ka_write_state(_m)
+        elif what == 'live':
+            info = (_ka_mp_sites().get(sid) or {})
+            dom = sid
+            for d0, info0 in (_ka_mp_sites() or {}).items():
+                if str(info0.get('id')) == str(info.get('id')) and d0:
+                    dom = d0
+                    break
+            _ka_live_probe(dom, info.get('id'), timeout=40)
+        return True
+    except Exception as e:
+        _ka_auto_log('动作 %s/%s 异常 %s' % (sid, what, str(e)[:80]))
+        return False
+
+
+def _ka_auto_tick():
+    """单次巡检：逐站判断是否达标，未达标则自动执行保号/加种；全程 try 保护防卡死。"""
+    st = _ka_read_state()
+    sites = st.get('sites') or {}
+    try:
+        rows = keepalive_sites()
+    except Exception as e:
+        _ka_auto_log('读取站点状态失败 %s' % str(e)[:80])
+        return
+    if isinstance(rows, dict):
+        rows = rows.get('rows') or []
+    by_id = {}
+    for r in (rows or []):
+        if not isinstance(r, dict):
+            continue
+        by_id[str(r.get('id'))] = r
+    acted = []
+    for sid, ss in sites.items():
+        try:
+            if not ss.get('enabled'):
+                continue
+            r = by_id.get(str(sid)) or {}
+            live_ok = bool(r.get('live_ok'))
+            login = str(r.get('login_txt') or '')
+            nb = str(r.get('newbie_status') or '')
+            # ① 实时数值失败 → 重新探测（cookie 过期的站 cooldown 长一点防死循环）
+            if not live_ok:
+                bad = str(r.get('live_err') or '')
+                cd = 7200 if ('登' in bad or 'cookie' in bad.lower()) else 1800
+                if _ka_auto_action(sid, 'live', cooldown=cd):
+                    acted.append('%s:重探' % sid)
+            # ② 登录超过阈值(非 0 天) → 信标保号
+            login_days = 0.0
+            try:
+                login_days = float(login.split('天')[0].strip() or 0)
+            except Exception:
+                pass
+            if login_days >= 1:
+                if _ka_auto_action(sid, 'kick', cooldown=3600):
+                    acted.append('%s:保号' % sid)
+            # ③ 未达标新号/警告 → 自动辅种涨流量(站点有门槛时 cooldown 更长)
+            if nb in ('new', 'warn'):
+                if _ka_auto_action(sid, 'seed', cooldown=7200):
+                    acted.append('%s:辅种' % sid)
+        except Exception as e:
+            _ka_auto_log('站点 %s 巡检异常 %s' % (sid, str(e)[:60]))
+            continue
+    if acted:
+        _ka_auto_log('自动执行：' + ', '.join(acted[:12]))
+    else:
+        _ka_auto_log('巡检完成：全部站点状态正常或处于冷却期')
+
+
+def _ka_auto_monitor_loop():
+    """后台自动监控：默认开启，每 interval 秒巡检一次；配置可关。"""
+    time.sleep(45)  # 启动后先等服务稳定
+    while True:
+        try:
+            cfg = _ka_auto_cfg()
+            if cfg.get('enabled'):
+                st = _KA_AUTO
+                st['running'] = True
+                try:
+                    _ka_auto_tick()
+                    st['last_run'] = time.time()
+                finally:
+                    st['running'] = False
+        except Exception as e:
+            _ka_auto_log('主循环异常 %s' % str(e)[:100])
+        try:
+            iv = int(_ka_auto_cfg().get('interval') or 900)
+        except Exception:
+            iv = 900
+        time.sleep(max(300, min(iv, 86400)))
+
+
 def _ka_sync_bg():
     """同步所有站点（v1.49 真实时）：
     ① 并发 POST /site/userdata/{id} → 让 MoviePilot 当场重抓每站 HTML（真·实时数值）
@@ -29020,6 +29163,14 @@ class H(BaseHTTPRequestHandler):
         # ★ v1.49 单站实时刷新（卡片右上角 ⟳）：真·POST 让 MP 当场重抓该站
         if p == '/api/ka/live':
             return self._j(ka_live_one(sid=q1('id'), dom=q1('dom')))
+        if p == '/api/ka/auto':
+            cfg = _ka_auto_cfg()
+            return self._j({'ok': True, 'enabled': bool(cfg.get('enabled')),
+                            'interval': int(cfg.get('interval') or 900),
+                            'running': bool(_KA_AUTO.get('running')),
+                            'last_run': _KA_AUTO.get('last_run') or 0,
+                            'actions': dict(_KA_AUTO.get('actions') or {}),
+                            'log': list(_KA_AUTO.get('log') or [])[:20]})
         if p == '/api/ka/sync/status':
             ts0 = _KA_SYNC.get('ts') or 0
             _bt = 0.0
@@ -30633,6 +30784,23 @@ class H(BaseHTTPRequestHandler):
                 oplog('keepalive', 'toggle', '保号启停 %s → %s'
                       % (sid, '开启' if b.get('enabled') else '停用'), True, r.get('msg'))
             return self._j(r)
+        if u.path == '/api/ka/auto':
+            cfg = _ka_auto_cfg()
+            if 'enabled' in b:
+                cfg['enabled'] = bool(b.get('enabled'))
+            if 'interval' in b:
+                try:
+                    cfg['interval'] = max(300, min(int(b.get('interval')), 86400))
+                except Exception:
+                    pass
+            ok = _ka_auto_save(cfg)
+            if ok and 'enabled' in b:
+                _ka_auto_log('自动监控已' + ('开启' if cfg['enabled'] else '关闭'))
+            return self._j({'ok': ok, **cfg, 'msg': '自动监控配置已保存' if ok else '写入失败'})
+        if u.path == '/api/ka/auto/run':
+            threading.Thread(target=_ka_auto_tick, daemon=True).start()
+            return self._j({'ok': True, 'msg': '已手动触发一次自动巡检'})
+
         if u.path == '/api/ka/sync':
             if _KA_SYNC.get('running'):
                 return self._j({'ok': True, 'running': True,
@@ -35533,4 +35701,10 @@ if __name__ == '__main__':
         pass
     threading.Thread(target=q2f_loop, daemon=True).start()
 
+    # ★ 2026-11-19 PT 保号自动监控达标：每站独立检查+自动执行，带 cooldown 防卡死
+    try:
+        threading.Thread(target=_ka_auto_monitor_loop, daemon=True,
+                         name='ka-auto-monitor').start()
+    except Exception as _ae:
+        logger.warning('[KA-AUTO] 线程启动失败 %s', _ae)
     ThreadingHTTPServer(('0.0.0.0', PORT), H).serve_forever()
