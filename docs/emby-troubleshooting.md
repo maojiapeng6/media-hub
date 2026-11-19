@@ -159,13 +159,13 @@
 | 字段 | 转正剧（错） | 正常剧（对） | 修复 |
 |---|---|---|---|
 | `ProviderIds` | `{"Tmdb":"60059"}`（JSON 字符串，API 读成 None） | `Tmdb=60059`（`key=value` 管道分隔） | 全改标准格式 |
-| PUK 后缀 hash | 自造随机 md5 | **同库共享一个 hash**（欧美剧库=`7a682ec341ac4e81b7114a860e6f88d1`） | 全层 27844 条 PUK 换成库标准 hash |
+| PUK 后缀 hash | 自造随机 md5 | **同库共享一个 hash**（查同库正常剧 PUK 的 `-zh-` 后 32 位，如 `<欧美剧库PUK哈希>`） | 全层 27844 条 PUK 换成库标准 hash |
 | 季名 | `Season 01` | `第 1 季`（TMDB 中文习惯） | 1665 季全改 `第 N 季` |
 | 剧名 | `风骚律师 (2015)` | `风骚律师`（正常剧 0/500 带年份） | 584 部去掉 `(年份)` 后缀 |
 
 **PUK hash 规律**：`PresentationUniqueKey = tmdb-series-{tmdbid}-zh-{hash}`，其中 `hash` **按媒体库固定**（同一 Parent 下所有剧相同），不是按剧随机。跨服务器聚合靠 `Tmdb ID` + 标准 PUK 匹配——hash 自造就匹配不上。**查法**：找同库正常剧的 PUK 取 `-zh-` 后 32 位即可。
 
-**实测**：修后风骚律师 `ProviderIds=Tmdb=60059`、PUK=`tmdb-series-60059-zh-7a682ec3...`、季名`第 1~6 季`、剧名`风骚律师`、236集、封面有、假剧=0，与同库正常剧格式完全一致。Imdb/Tvdb 未补（正常剧也大量只有 Tmdb，如 `Tmdb=205014`，不影响 Tmdb 聚合）。
+**实测**：修后风骚律师 `ProviderIds=Tmdb=60059`、PUK=`tmdb-series-60059-zh-<库标准哈希>`、季名`第 1~6 季`、剧名`风骚律师`、236集、封面有、假剧=0，与同库正常剧格式完全一致。Imdb/Tvdb 未补（正常剧也大量只有 Tmdb，如 `Tmdb=205014`，不影响 Tmdb 聚合）。
 
 ---
 
