@@ -126,7 +126,31 @@
 
 **实测**：假剧 `2010`=0、`2010-2019`=Folder、层内独立剧 **666**、32849 strm 完好、风骚律师在原路径 `2010-2019/风骚律师 (2015) [tmdbid-60059]`、TMDB `60059`。
 
-**为何用 Created 通知而非扫描建 Series**：Emby 增量通知不导入新文件（Season/Episode 级无效），但对**已存在的目录项**（剧目录）发 Created 能让实时监控秒级建 Series——这正是 666 剧秒级入库的关键。
+> ⚠️ **上面第 4 步的 Created 通知法后来被证明是错的（2026-11-19 下午），见下方「假季原地转正」——不要再用 Created 通知！**
+
+**为何当时以为 Created 有效**：independent 新库路径首次 Created 看似秒建 666 剧，实为巧合；在原库路径批量发 Created 会翻车（见下）。
+
+### 🔴 最终治本 v3：假季原地转正（2026-11-19 下午，真正修好被吞的剧）
+
+**背景**：v2 只把层改回 Folder，但层里的 600 部剧仍是"假剧的季"，被吞的剧没有独立条目。且批量 Created 通知引发灾难。
+
+**Created 通知是毒药（日志铁证）**：`embyserver.txt` 疯狂刷 `LibraryMonitor: 2010 (...) will be refreshed` 数百次——**批量 Created 会堆积成无限刷新循环、堵死扫描队列（卡 0.236%）、且每次刷新都把层重判为 Series**。关实时监控、停扫描、移走层 nfo 都无法阻止（Created 自身触发的刷新链）。**结论：绝不对 Emby 批量发 Created 通知（>几十条必翻车）**。
+
+**真根因**：假 Series 下挂着 600 个"季"（`type=7`），但每个季的 `Path` 其实是一部**真剧的目录**（宝可梦、圣女魔咒…），季下再挂 `type=3` 的 Season 文件夹（Season 01/02…），Season 下才是 Episode。层级整体错位了一层：**Folder → [假Series→假季→Season→集]，正确应为 Folder → [真Series→Season→集]**。
+
+**原地转正（纯字段更新，不删任何数据，秒级）**：停服后操作 `library.db`（先 `backup()` 备份）：
+1. 假季 `type=7 → 6`（Series），`ParentId` 保持指向层 Folder
+2. 其下 Season 文件夹 `type=3 → 7`（Season）
+3. 清残留：Series 的 `SeriesName/SeriesId/SeriesPresentationUniqueKey → NULL`、`Name` 去 ` [tmdbid-xxxxx]` 后缀
+4. **补三层关联键**（关键，否则 API 查季集=0）：
+   - Series: `PresentationUniqueKey = tmdb-series-{tmdbid}-zh-{md5}`、`ProviderIds={"Tmdb":tid}`
+   - Season: `IndexNumber`=季号(从"Season 01"解析)、`SeriesId`=Series.Id、`PresentationUniqueKey={PUK}-{季号:03d}`、`SeriesPresentationUniqueKey={PUK}`
+   - Episode: `SeriesId`=Series.Id、`ParentIndexNumber`=季号、`SeriesPresentationUniqueKey={PUK}`
+5. `commit()` + `PRAGMA wal_checkpoint(TRUNCATE)` + 回读验证，启服
+
+**实测**：600 部独立剧全部显示正确季集（宝可梦6季53集、博斯7季188集、风骚律师6季236集），假剧=0，32849 strm 完好，播放链路指向 115 真文件。**未覆盖的 7255 集是各剧 Season 00 特典，`SeriesId` 仍残留指向旧假剧 Id，但不影响按 ParentId 显示/播放**。
+
+**DB 恢复要点**：`cp` 备份后必须 `chown root:root && chmod 775` + 删 `library.db-wal/shm`，否则 Emby 加载异常、库根子项=0。
 
 ---
 
@@ -134,6 +158,8 @@
 
 | 坑 | 说明 |
 |---|---|
+| 批量 Created 通知 | 🔴 **毒药**：`POST /Library/Media/Updated` 发几十条以上会堆积成无限刷新循环（`LibraryMonitor: X will be refreshed` 刷屏）、堵死扫描(卡 0.x%)、并把 Folder 重判为 Series。关实时监控/停扫描都挡不住。**永远别批量发** |
+| 被吞剧还原 | 改 type 只修好层( Folder)，剧仍是假剧的季；须做「假季原地转正」(见治本 v3)：type7→6 + type3→7 + 清 SeriesName/SeriesId + 补三层 PresentationUniqueKey 关联键，否则 API 查季集=0 |
 | `DELETE /Items/{Id}` | 删物理文件，不能当"清索引"用 |
 | 反复 `/Library/Refresh` | 取消并重启扫描任务 |
 | 目录 symlink | Emby **不跟随**，新目录必须实体文件 |
