@@ -1915,21 +1915,23 @@ SSORT_BUILTIN = {'default': '🏠 内置默认',
 SSORT_RULES_TXT = """
 # 格式：组:类别|move = 基数   （类别按方案名关键字包含匹配；skip 自动 = move + 0.5）
 # 效果：同一目录「移动在上、对应跳过紧随其下」；类别顺序 = 基数顺序
-# 组顺序固定：PT → 未识别 → MT → RT → 115大包 → 专属 → 其他
+# ★ 默认组顺序（2026-11-19 用户指定）：PT → 夸克 → MT → RT → 115大包 → 专属 → 其他 → 未识别(最末)
 # 组内类别默认：PT 求片→订阅 ｜ MT/RT 离线→转存→缺集→追新（缺集在追新前）
 PT:求片|move=1  PT:订阅|move=3
+夸克:普通|move=1
 MT:离线|move=1  MT:转存|move=3  MT:缺集|move=5  MT:追新|move=7
 RT:离线|move=1  RT:转存|move=3  RT:缺集|move=5  RT:追新|move=7  RT:测试|move=9
-未识别:离线|move=1  未识别:转存|move=3  未识别:缺集|move=5  未识别:追新|move=7  未识别:求片|move=9  未识别:订阅|move=11
 115大包:普通|move=1
 专属:普通|move=1
 其他:普通|move=1
+未识别:离线|move=1  未识别:转存|move=3  未识别:缺集|move=5  未识别:追新|move=7  未识别:求片|move=9  未识别:订阅|move=11
 """
 
 def _ssort_group(name):
     n = name or ''
     if '未识别' in n: return '未识别'
     if n.startswith('PT') or '/PT/' in n or 'PT-' in n: return 'PT'
+    if n.startswith('夸克') or '/夸克/' in n or '夸克-' in n: return '夸克'
     if 'MT' in n: return 'MT'
     if 'RT' in n: return 'RT'
     if '115大包' in n: return '115大包'
@@ -1970,7 +1972,7 @@ def _ssort_rules():
 def _ssort_key(t, rules):
     name = t.get('name') or ''
     grp = _ssort_group(name)
-    order = {'PT': 0, '未识别': 1, 'MT': 2, 'RT': 3, '115大包': 4, '专属': 5, '其他': 6}
+    order = {'PT': 0, '夸克': 1, 'MT': 2, 'RT': 3, '115大包': 4, '专属': 5, '其他': 6, '未识别': 9}
     base = order.get(grp, 9) * 10000
     cat = _ssort_cat(name)
     tt = 'skip' if (t.get('transferType') or '').startswith('skip') else 'move'

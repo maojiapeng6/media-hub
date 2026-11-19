@@ -22352,7 +22352,7 @@ async function ssData(){
 
 function ssGroupSort(jobs){
 
-  const g={PT:0,'未识别':1,MT:2,RT:3,'115大包':4,'专属':5,'其他':6};
+  const g={PT:0,'夸克':1,MT:2,RT:3,'115大包':4,'专属':5,'其他':6,'未识别':9};
 
   return [...jobs].sort((a,b)=>(g[a.grp]-g[b.grp])||(a.man_pos-b.man_pos)||((a.def_pos||9999)-(b.def_pos||9999))||(a.id-b.id));
 
@@ -22398,7 +22398,7 @@ async function ssCard(){
 
   return `<div class="card" style="margin-top:14px"><h3>🎛 一键排序（组配对 · 移动在上 → 对应跳过在下 · 同目录成对）</h3>
 
-    <div class="sub">规则：<b>PT → MT → RT → 115大包 → 专属 → 其他 → 未识别（最末）</b>；组内 <b>离线 → 转存 → 缺集 → 追新</b>；每个目录 <b>移动任务在上、对应跳过任务紧随其下</b>。写入 MT 的 sortOrder，列表即刻成对排列。</div>
+    <div class="sub">规则：<b>PT → 夸克 → MT → RT → 115大包 → 专属 → 其他 → 未识别（最末）</b>；组内 <b>离线 → 转存 → 缺集 → 追新</b>；每个目录 <b>移动任务在上、对应跳过任务紧随其下</b>。写入 MT 的 sortOrder，列表即刻成对排列。</div>
 
     <div class="row" style="align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap">
 

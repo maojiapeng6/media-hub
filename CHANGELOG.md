@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.2.13] - 2026-11-19 · 任务组默认顺序（PT→夸克→MT→RT→未识别最末）+ 整理后清理分类化
+
+- **默认排序规则更新**：内置默认组顺序由 `PT→未识别→MT→RT→…` 改为 **`PT → 夸克 → MT → RT → 115大包 → 专属 → 其他 → 未识别(最末)`**；`_ssort_group()` 新增「夸克」分组识别，`_ssort_key()`/`ssGroupSort()` 顺序字典同步；新增「夸克:普通」规则行。用户可用现有「一键应用/恢复/多模板/设默认/每天自动恢复」机制随时恢复此默认顺序。
+- **整理后清理分类化**：move 类方案 cleanEmptyDirs 全部开启（14/14），skip 类方案关闭（14/14）——避免跳过任务在收尾时清理大量空目录被 CD2 FUSE RPC 取消、拖垮任务组串联。
+- 补丁 `tools/patch_order_default.py`（锚点唯一、幂等、CRLF 保留）+ `tools/deploy_order.py`（md5 比对→备份→NAS 现打现写→py_compile→restart）；线上已实测默认顺序写入 22 项、26/26 清理状态回读正确。
+- 隐私守门 blocking=0。
+
 ## [4.2.12] - 2026-11-19 · 假「2010」真正治本（Emby DB type 6→3，剧回原位置）
 
 - **真正根因**：Emby 4.10 `library.db` 用 `MediaItems` 表，`type` 字段 `3=Folder/6=Series/7=Season/8=Episode`；唯一异常是 `2010-2019` 层 `type=6`（其余年代层全 `type=3`）——Emby 靠这一个字段把整层当一部剧，删 nfo/删子树/重扫都无效
