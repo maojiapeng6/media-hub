@@ -152,6 +152,21 @@
 
 **DB 恢复要点**：`cp` 备份后必须 `chown root:root && chmod 775` + 删 `library.db-wal/shm`，否则 Emby 加载异常、库根子项=0。
 
+### 治本 v3 续：元数据对齐（2026-11-19，用户反馈"季名英文/其他 Emby 服务器无法聚合"）
+
+转正剧虽然季集对了，但**元数据字段是我自造的**，导致跨服务器聚合搜索失败、季名英文。对比正常剧后修四项：
+
+| 字段 | 转正剧（错） | 正常剧（对） | 修复 |
+|---|---|---|---|
+| `ProviderIds` | `{"Tmdb":"60059"}`（JSON 字符串，API 读成 None） | `Tmdb=60059`（`key=value` 管道分隔） | 全改标准格式 |
+| PUK 后缀 hash | 自造随机 md5 | **同库共享一个 hash**（欧美剧库=`7a682ec341ac4e81b7114a860e6f88d1`） | 全层 27844 条 PUK 换成库标准 hash |
+| 季名 | `Season 01` | `第 1 季`（TMDB 中文习惯） | 1665 季全改 `第 N 季` |
+| 剧名 | `风骚律师 (2015)` | `风骚律师`（正常剧 0/500 带年份） | 584 部去掉 `(年份)` 后缀 |
+
+**PUK hash 规律**：`PresentationUniqueKey = tmdb-series-{tmdbid}-zh-{hash}`，其中 `hash` **按媒体库固定**（同一 Parent 下所有剧相同），不是按剧随机。跨服务器聚合靠 `Tmdb ID` + 标准 PUK 匹配——hash 自造就匹配不上。**查法**：找同库正常剧的 PUK 取 `-zh-` 后 32 位即可。
+
+**实测**：修后风骚律师 `ProviderIds=Tmdb=60059`、PUK=`tmdb-series-60059-zh-7a682ec3...`、季名`第 1~6 季`、剧名`风骚律师`、236集、封面有、假剧=0，与同库正常剧格式完全一致。Imdb/Tvdb 未补（正常剧也大量只有 Tmdb，如 `Tmdb=205014`，不影响 Tmdb 聚合）。
+
 ---
 
 ## 高频坑清单
@@ -160,6 +175,7 @@
 |---|---|
 | 批量 Created 通知 | 🔴 **毒药**：`POST /Library/Media/Updated` 发几十条以上会堆积成无限刷新循环（`LibraryMonitor: X will be refreshed` 刷屏）、堵死扫描(卡 0.x%)、并把 Folder 重判为 Series。关实时监控/停扫描都挡不住。**永远别批量发** |
 | 被吞剧还原 | 改 type 只修好层( Folder)，剧仍是假剧的季；须做「假季原地转正」(见治本 v3)：type7→6 + type3→7 + 清 SeriesName/SeriesId + 补三层 PresentationUniqueKey 关联键，否则 API 查季集=0 |
+| 转正剧元数据 | 转正后必须对齐四项否则跨服务器聚合失败、季名英文：①ProviderIds 用 `Tmdb=xxx` 格式(不是 JSON)；②PUK hash 用**同库标准值**(同Parent下共享，查正常剧 PUK 的 `-zh-` 后32位)；③季名 `第 N 季`；④剧名去 `(年份)` 后缀 |
 | `DELETE /Items/{Id}` | 删物理文件，不能当"清索引"用 |
 | 反复 `/Library/Refresh` | 取消并重启扫描任务 |
 | 目录 symlink | Emby **不跟随**，新目录必须实体文件 |
