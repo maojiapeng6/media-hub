@@ -195,6 +195,9 @@
 | 被吞剧还原 | 改 type 只修好层( Folder)，剧仍是假剧的季；须做「假季原地转正」(见治本 v3)：type7→6 + type3→7 + 清 SeriesName/SeriesId + 补三层 PresentationUniqueKey 关联键，否则 API 查季集=0 |
 | 转正剧元数据 | 转正后必须对齐四项否则跨服务器聚合失败、季名英文：①ProviderIds 用 `Tmdb=xxx` 格式(不是 JSON)；②PUK hash 用**同库标准值**(同Parent下共享，查正常剧 PUK 的 `-zh-` 后32位)；③季名 `第 N 季`；④剧名去 `(年份)` 后缀 |
 | 🔴 假剧/结构反复复发 | 只改 DB 必被 Emby 删除重建覆盖（层 item **Id 变化**即重建标志）。根因是 `EnableRealtimeMonitor=True` 让 Emby 自己写回层根 `tvshow.nfo`/剧目录 `season.nfo`。**必须三闸并做**：关实时监控+清物理nfo+修DB，缺一必复发 |
+| 🔴 验收"集数=0"是假象 | `GET /Items?ParentId=<季ID>&IncludeItemTypes=Episode` **不可靠**——连正常剧的季都返回 0/ChildCount=None。正确验证用 `SearchTerm` 搜剧名/集名看 `TotalRecordCount`，再看 `MediaSources[0].Path` 指向 115 真文件。曾因此误判"新剧0集"反复折腾多轮 |
+| 手动 INSERT item 必补字段 | 直接 INSERT 的 Series/Season 若不补 `guid`(16bytes uuid)、`UserDataKeyId`+对应 UserDatas 记录、`DateLastRefreshed/DateLastSaved`，Emby API 可能不认。对照正常 item 的非空字段补齐 |
+| 大批量 DB 操作 | 用 Python 逐条 query/update 7263 集会超时；一次性读入内存字典 + executemany 批量写（0.3s）。SSH 前台执行长任务会随连接断开被杀，用 setsid 后台 |
 | `DELETE /Items/{Id}` | 删物理文件，不能当"清索引"用 |
 | 反复 `/Library/Refresh` | 取消并重启扫描任务 |
 | 目录 symlink | Emby **不跟随**，新目录必须实体文件 |
