@@ -167,6 +167,24 @@
 
 **实测**：修后风骚律师 `ProviderIds=Tmdb=60059`、PUK=`tmdb-series-60059-zh-<库标准哈希>`、季名`第 1~6 季`、剧名`风骚律师`、236集、封面有、假剧=0，与同库正常剧格式完全一致。Imdb/Tvdb 未补（正常剧也大量只有 Tmdb，如 `Tmdb=205014`，不影响 Tmdb 聚合）。
 
+### 🔴🔴 治本 v4：复发根因 = Emby 实时监控写回 NFO（2026-11-20，第二次复发后才找到）
+
+**现象**：v3 修完次日，假剧「2010」再次出现、风骚律师又搜不到。层 ID 从 `3066062` 变成 `3440336`——**ID 变化 = 该 item 被 Emby 删除重建**，不是字段被覆盖。
+
+**真正触发源（前几版全漏掉）**：库的 `EnableRealtimeMonitor=True`。Emby 在扫描/重建时**自己往目录写本地 NFO**（内容含 `<dateadded>/<lockdata>/<displayorder>`、标题"2010"，是 Emby 标准格式，非 MT 写）：
+- 层根 `tvshow.nfo`（标题=2010）→ Emby 把 `2010-2019` 整层判成一部 Series
+- 剧目录顶层 `season.nfo` → 固化每个"季"的错误结构
+- 层根一旦有 tvshow.nfo，Emby 删旧 item 重建 → **覆盖所有手工 DB 改动** → 复发
+
+**治本三闸（缺一必复发）**：
+1. **关触发源**：`POST /Library/VirtualFolders/LibraryOptions {Id,LibraryOptions:{EnableRealtimeMonitor:false, SaveLocalMetadata:false}}`（重启后复查仍为 False 才算持久化）
+2. **清物理诱导文件**：停服，删/移走层根所有 nfo + 全部剧目录顶层 `season.nfo`（备份）
+3. **修 DB 结构**：复用 v3 假季转正 + v3续 元数据对齐全套（作用于新层 ID）
+
+**判断复发类型**：层 Path 对应 item 的 **Id 是否变化**——变了=被删除重建（查 nfo 触发源）；没变=字段被覆盖（查扫描/元数据刷新）。
+
+**验证**：三闸全做后重启 Emby 复查——层=Folder、假剧=0、`Realtime/SaveLocal` 仍 False、nfo 层根空/剧目录 0（未写回）、剧集季数播放全正常。
+
 ---
 
 ## 高频坑清单
@@ -176,6 +194,7 @@
 | 批量 Created 通知 | 🔴 **毒药**：`POST /Library/Media/Updated` 发几十条以上会堆积成无限刷新循环（`LibraryMonitor: X will be refreshed` 刷屏）、堵死扫描(卡 0.x%)、并把 Folder 重判为 Series。关实时监控/停扫描都挡不住。**永远别批量发** |
 | 被吞剧还原 | 改 type 只修好层( Folder)，剧仍是假剧的季；须做「假季原地转正」(见治本 v3)：type7→6 + type3→7 + 清 SeriesName/SeriesId + 补三层 PresentationUniqueKey 关联键，否则 API 查季集=0 |
 | 转正剧元数据 | 转正后必须对齐四项否则跨服务器聚合失败、季名英文：①ProviderIds 用 `Tmdb=xxx` 格式(不是 JSON)；②PUK hash 用**同库标准值**(同Parent下共享，查正常剧 PUK 的 `-zh-` 后32位)；③季名 `第 N 季`；④剧名去 `(年份)` 后缀 |
+| 🔴 假剧/结构反复复发 | 只改 DB 必被 Emby 删除重建覆盖（层 item **Id 变化**即重建标志）。根因是 `EnableRealtimeMonitor=True` 让 Emby 自己写回层根 `tvshow.nfo`/剧目录 `season.nfo`。**必须三闸并做**：关实时监控+清物理nfo+修DB，缺一必复发 |
 | `DELETE /Items/{Id}` | 删物理文件，不能当"清索引"用 |
 | 反复 `/Library/Refresh` | 取消并重启扫描任务 |
 | 目录 symlink | Emby **不跟随**，新目录必须实体文件 |
