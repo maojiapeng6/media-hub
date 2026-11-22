@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.2.22] - 2026-11-22 · 封面校验最终归零 + 部署铁律（stop+start 代替 restart）
+
+- **全量校验归零**：`poster/check`（limit=120）→ **0 部不符**；批量修复 **23/23 成功**（此前报告的"17 部不符"是旧代码假阳性：`only_new` 默认 False 查了全库 + 旧判定逻辑）
+- **🔴 部署铁律**：`docker restart media-hub` 在有长请求时会**静默失败**，线上继续跑旧代码（本次连续踩 3 次，表现为"改了没生效"）。**改用 `docker stop` + `docker start`**，且部署后必须核对 `docker inspect -f '{{.State.StartedAt}}' media-hub` > `app.py` mtime
+- **校验判据补诊断字段**（`ref_len`/`local_len`），便于快速定位是"本地图不对"还是"Emby 未关联"
+- 双帝最终态：TMDB 1599184 · 封面 True · 播放流 HTTP 206 + 262144 字节真实视频 · Emby 显示 = TMDB 官网红色双雄主视觉（人眼确认）
+
 ## [4.2.21] - 2026-11-22 · 封面校验判据最终定稿（实测链）+ 兜底入库重启Emby
 
 - **🔴 判据链条（全部实测验证，最终定稿）**：

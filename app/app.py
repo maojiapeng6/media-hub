@@ -35094,10 +35094,12 @@ def embyfix_v4_poster_check(limit=60, only_new=True):
         # ① 本地图 == 官网图？
         try:
             ref = _v4_fetch(meta['poster'])
-        except Exception:
+        except Exception as _ex:
             continue
         try:
-            local_md5 = _h.md5(open(pj, 'rb').read()).hexdigest()
+            _lb = open(pj, 'rb').read()
+            local_size = len(_lb)
+            local_md5 = _h.md5(_lb).hexdigest()
         except Exception:
             continue
         local_ok = (local_md5 == _h.md5(ref).hexdigest())
@@ -35114,6 +35116,7 @@ def embyfix_v4_poster_check(limit=60, only_new=True):
                     'parent': r.get('ParentId'), 'dir': dd,
                     'media_type': meta.get('kind'), 'title': meta.get('title'),
                     'local_ok': local_ok, 'linked': linked, 'shown_len': shown_len,
+                    'ref_len': len(ref), 'local_len': local_size,
                     'main': meta['poster'].split('/t/p/')[-1].split('/')[-1]})
         if len(out) >= limit:
             break
