@@ -15825,7 +15825,8 @@ const EF2_INSTS=[{k:'emby',n:'KFC 主库',p:'8096'},{k:'emby_adult',n:'KFC2 成�
 const EF2_TABS=[{k:'overview',n:'节点总览',i:'🩺'},{k:'cross',n:'三端同查',i:'🔎'},
  {k:'scan',n:'全量 / 单库检查',i:'📊'},{k:'refresh',n:'精确刷新',i:'⚡'},
  {k:'node',n:'节点控制',i:'🎛️'},{k:'ops',n:'操作历史',i:'📜'},
- {k:'tmdb',n:'TMDB 元数据',i:'🧪'}];
+ {k:'tmdb',n:'TMDB 元数据',i:'🧪'},
+ {k:'playcheck',n:'不可播检修',i:'🎬'}];
 const EF2_NODE_META=[
  {k:'cloud115',n:'115 网盘',i:'☁️'},{k:'mtPoll',n:'MT 定期轮询',i:'🔄'},
  {k:'mtOrganize',n:'整理落位',i:'📦'},{k:'strmGen',n:'STRM 生成',i:'📝'},
@@ -15883,6 +15884,7 @@ function ef2RenderBody(){
   else if(EF2_TAB==='node')ef2ViewNode(b);
   else if(EF2_TAB==='ops')ef2ViewOps(b);
   else if(EF2_TAB==='tmdb')ef2ViewTmdb(b);
+  else if(EF2_TAB==='playcheck')ef2ViewPlaycheck(b);
 }
 
 /* ── Tab1 节点总览 ── */
@@ -16172,6 +16174,50 @@ async function ef2Node(action,arg){
 let EF3_ROWS=null, EF3_PROBE=null, EF3_SEL={}, EF3_STOP=false;
 const EF3_FIELDS=[['cover','封面'],['title','集标题'],['plot','剧情简介'],['aired','首播日期'],
  ['season_name','季名称'],['overview','剧集简介']];
+
+/* ── Tab: 不可播集检修（Size=NULL 失效集）── */
+let EF2_PLAY_ROWS=[];
+async function ef2ViewPlaycheck(b){
+  const box=document.getElementById('ef2Body');
+  box.innerHTML='<div class="card"><h3 style="margin:0 0 10px">🎬 不可播集检修 <span class="sub" style="font-weight:400;font-size:12px">检测 Emby 中 Size=NULL 的失效剧集版本</span></h3>'+
+    '<div class="sub" style="line-height:1.7;margin-bottom:12px">'+
+    '原理：同一集存在多个版本时，若某版本的 115 实体失效（Emby 探测 Size=NULL），手机端选中它就会「无法播放」。<br>'+
+    '<b style="color:#fbbf24">冗余</b>：同集另有可播版本 → 可安全删失效版本修好；'+
+    '<b style="color:#f87171">真缺</b>：所有版本都失效 → 需重扫 115 实体（本页只删冗余，不动真缺）。</div>'+
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">'+
+    '<button class="btn sm" style="background:#7c3aed;color:#fff" onclick="ef2PlayScan()">🔍 扫描不可播集</button>'+
+    '<span id="ef2PlayStat" class="sub"></span></div>'+
+    '<div id="ef2PlayList"></div></div>';
+}
+async function ef2PlayScan(){
+  const st=document.getElementById('ef2PlayStat'),lst=document.getElementById('ef2PlayList');
+  st.textContent='扫描中…';lst.innerHTML='<span class="e2-spin"></span>';
+  try{
+    const d=await apiGet('/api/embyfix/v3/playcheck?which='+EF2_WHICH+'&limit=200',120000);
+    if(!d.ok){st.textContent='扫描失败：'+(d.detail||'');lst.innerHTML='';return;}
+    EF2_PLAY_ROWS=d.rows||[];
+    st.textContent='发现 '+d.series_count+' 部剧 · 冗余 '+d.redundant_total+' 集 · 真缺 '+d.missing_total+' 集';
+    if(!EF2_PLAY_ROWS.length){lst.innerHTML='<div class="sub">✅ 未发现不可播集</div>';return;}
+    let h='<table class="ef-tb"><thead><tr><th>剧名</th><th>冗余失效集</th><th>真缺集</th><th>修复</th></tr></thead><tbody>';
+    EF2_PLAY_ROWS.forEach(function(r,i){
+      h+='<tr><td>'+esc(r.name)+'</td>'+
+        '<td>'+(r.redundant>0?'<b style="color:#fbbf24">'+r.redundant+'</b>':'0')+'</td>'+
+        '<td>'+(r.missing>0?'<b style="color:#f87171">'+r.missing+'</b>':'0')+'</td>'+
+        '<td>'+(r.redundant>0?'<button class="btn sec ef-mini" onclick="ef2PlayFix('+i+')">🛠️ 删冗余修复</button>':'<span class="sub">无需删</span>')+'</td></tr>';
+    });
+    lst.innerHTML=h+'</tbody></table>';
+  }catch(e){st.textContent='扫描异常：'+e;lst.innerHTML='';}
+}
+async function ef2PlayFix(i){
+  const r=EF2_PLAY_ROWS[i];if(!r)return;
+  if(!confirm('删除《'+r.name+'》的 '+r.redundant+' 个失效冗余集版本？\n（保留可播版本，不碰真缺集；将自动重启 Emby 刷新）'))return;
+  const d=await apiPost('/api/embyfix/v3/playfix',{which:EF2_WHICH,series_id:r.series_id,dry_run:false});
+  toast(r.name+'：'+(d.ok?'已删 '+d.deleted+' 集':'失败'),d.ok?'ok':'err');
+  // 修复后自动重启 Emby
+  try{await apiPost('/api/embyfix/v2/refresh',{which:EF2_WHICH,scope:'library',target:'emby-main'});}catch(e){}
+  ef2PlayScan();
+}
+
 async function ef2ViewTmdb(b){
   b.innerHTML='<div class="card"><h3 style="margin:0 0 10px">🧪 TMDB 官方元数据 <span class="sub" style="font-weight:400">自检链路 → 扫描缺项 → 逐剧逐项修复（拉官方数据写 NFO/图，仅定向刷新单剧，绝不整库盲刷）</span></h3>'+
    '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">'+

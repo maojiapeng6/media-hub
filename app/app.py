@@ -30008,6 +30008,15 @@ class H(BaseHTTPRequestHandler):
             return self._j(embyfix_v2_node(
                 which=(b.get('which') or 'emby'), action=(b.get('action') or ''),
                 arg=(b.get('arg') or '')))
+        # ★ V3 不可播集检修（Size=NULL 失效集）
+        if u.path == '/api/embyfix/v3/playcheck':
+            return self._j(embyfix_v3_playcheck(
+                which=(b.get('which') or 'emby'), library=(b.get('library') or ''),
+                limit=(b.get('limit') if b.get('limit') is not None else 200)))
+        if u.path == '/api/embyfix/v3/playfix':
+            return self._j(embyfix_v3_playfix(
+                which=(b.get('which') or 'emby'), series_id=(b.get('series_id') or ''),
+                dry_run=bool(b.get('dry_run'))))
         # ★ V3 TMDB 元数据：逐项勾选修复（auto=全修）
         if u.path == '/api/embyfix/v3/repair':
             return self._j(embyfix_v3_repair(
@@ -34657,6 +34666,128 @@ def embyfix_v3_auto_repair(which='emby', library='', max_items=8, days=14, dry_r
                  scan.get('total', 0), total_broken, total_picked, len(batch), okcount, skipped, secs), secs)
     return out
 
+
+
+# ★ V3 不可播集检修：检测 Size=NULL 失效集（同集有有效版本=冗余可删 / 无有效版本=真缺）
+def embyfix_v3_playcheck(which='emby', library='', limit=200):
+    """扫描不可播集：Episode.Size IS NULL/0。分类：
+       redundant=同剧同集号已有Size>0有效版本(可安全删失效冗余)，
+       missing=同剧同集号全失效(需重新探测)。按剧聚合返回 top N。
+       不写库，纯只读。"""
+    t0 = _ef2_time.time()
+    db = _ef3_dbpath()
+    if not db:
+        return {'ok': False, 'detail': 'library.db 不可达', 'rows': [], 'secs': 0}
+    try:
+        limit = max(1, min(int(limit), 500))
+    except Exception:
+        limit = 200
+    # 按剧聚合：冗余失效集数 / 全失效集数
+    sql = """
+    SELECT se.Id AS SeriesId, se.Name AS SeriesName, se.Path AS SeriesPath,
+      sum(CASE WHEN g.good>0 THEN g.bad ELSE 0 END) AS redundant,
+      sum(CASE WHEN g.good=0 THEN g.bad ELSE 0 END) AS missing
+    FROM (
+      SELECT ParentId, IndexNumber,
+        sum(CASE WHEN Size IS NOT NULL AND Size>0 THEN 1 ELSE 0 END) good,
+        sum(CASE WHEN Size IS NULL OR Size=0 THEN 1 ELSE 0 END) bad
+      FROM MediaItems WHERE type=8 AND IndexNumber IS NOT NULL
+      GROUP BY ParentId, IndexNumber
+      HAVING bad>0
+    ) g
+    JOIN MediaItems season ON season.Id=g.ParentId
+    JOIN MediaItems se ON se.Id=season.ParentId
+    WHERE se.type=6
+    GROUP BY se.Id, se.Name, se.Path
+    HAVING redundant>0 OR missing>0
+    ORDER BY (redundant+missing) DESC
+    LIMIT %d
+    """ % limit
+    rows = _ef3_sql(db, sql)
+    out = []
+    for r in (rows or []):
+        if '__err' in r:
+            continue
+        out.append({'series_id': r.get('SeriesId'), 'name': r.get('SeriesName') or '',
+                    'path': r.get('SeriesPath') or '',
+                    'redundant': int(r.get('redundant') or 0),
+                    'missing': int(r.get('missing') or 0)})
+    # 汇总
+    tot_red = sum(x['redundant'] for x in out)
+    tot_mis = sum(x['missing'] for x in out)
+    return {'ok': True, 'rows': out, 'series_count': len(out),
+            'redundant_total': tot_red, 'missing_total': tot_mis,
+            'note': 'redundant=同集已有可播版本，删失效冗余即可修好；missing=全版本失效需重新探测115实体',
+            'secs': round(_ef2_time.time() - t0, 2)}
+
+def embyfix_v3_playfix(which='emby', series_id='', dry_run=False):
+    """修复不可播集：删除指定剧内「同集已有Size>0有效版本」的Size=NULL失效冗余集。
+       只删冗余、保留可播版本；不碰全失效组(missing)。停服由调用方/操作提示负责。"""
+    t0 = _ef2_time.time()
+    db = _ef3_dbpath()
+    if not db:
+        return {'ok': False, 'detail': 'library.db 不可达'}
+    if not str(series_id).isdigit():
+        return {'ok': False, 'detail': '无效 SeriesId'}
+    sid = int(series_id)
+    sel = """SELECT b.Id FROM MediaItems b
+      WHERE b.type=8 AND b.ParentId IN (SELECT Id FROM MediaItems WHERE ParentId=%d AND type=7)
+        AND (b.Size IS NULL OR b.Size=0) AND b.IndexNumber IS NOT NULL
+        AND EXISTS (SELECT 1 FROM MediaItems g
+          WHERE g.ParentId=b.ParentId AND g.IndexNumber=b.IndexNumber AND g.type=8 AND g.Size>0)""" % sid
+    targets = _ef3_sql(db, sel) or []
+    ids = [int(x['Id']) for x in targets if 'Id' in x]
+    info = {'ok': True, 'series_id': sid, 'targets': len(ids), 'dry_run': bool(dry_run),
+            'detail': '将删除 %d 个失效冗余集（保留可播版本）' % len(ids)}
+    if dry_run or not ids:
+        info['secs'] = round(_ef2_time.time() - t0, 2)
+        return info
+    # 确认 Emby 是否运行：若在运行，提示需停服（避免热改被覆盖）
+    import subprocess as _sp
+    try:
+        st = _sp.run(['docker','ps','--filter','name=emby-main','--format','{{.Names}}'],
+                     capture_output=True, text=True, timeout=10).stdout.strip()
+    except Exception:
+        st = ''
+    # 通过临时SQL脚本执行删除（含关联表），复用系统 python3 + sqlite3
+    deleted = embyfix_v3_playfix_exec(ids)
+    info['deleted'] = deleted
+    info['emby_running'] = bool(st)
+    info['detail'] = '已删除 %d 个失效冗余集%s' % (
+        deleted, '；Emby 正在运行，建议重启以刷新索引' if st else '')
+    info['secs'] = round(_ef2_time.time() - t0, 2)
+    return info
+
+def embyfix_v3_playfix_exec(ids):
+    """执行删除：MediaItems + 关联表，分批800，commit+checkpoint。"""
+    db = _ef3_dbpath()
+    con = __import__('sqlite3').connect(db, timeout=180)
+    cur = con.cursor()
+    cur.execute('PRAGMA foreign_keys=OFF')
+    n = 0
+    for i in range(0, len(ids), 800):
+        ch = ids[i:i+800]
+        ph = ','.join('?' * len(ch))
+        for tb in ('MediaStreams2','ItemLinks2','ItemPeople2','UserItemShares','ItemExtradata','SyncJobItems2'):
+            try:
+                cols = [x[1] for x in cur.execute('PRAGMA table_info(%s)' % tb)]
+            except Exception:
+                continue
+            key = 'ItemId' if 'ItemId' in cols else ('item_id' if 'item_id' in cols else None)
+            if key:
+                try:
+                    cur.execute('DELETE FROM %s WHERE %s IN (%s)' % (tb, key, ph), ch)
+                except Exception:
+                    pass
+        cur.execute('DELETE FROM MediaItems WHERE Id IN (%s)' % ph, ch)
+        n += len(ch)
+    con.commit()
+    try:
+        cur.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+    except Exception:
+        pass
+    con.close()
+    return n
 
 def embyfix_v3_repair(which='emby', sid='', tmdbid='', fields=None, auto=False, path=''):
     """逐项修复：拉 TMDB 官方数据写 NFO/图片 → 对单剧定向 FullRefresh（绝不整库）。
