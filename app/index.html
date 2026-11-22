@@ -15826,7 +15826,8 @@ const EF2_TABS=[{k:'overview',n:'节点总览',i:'🩺'},{k:'cross',n:'三端同
  {k:'scan',n:'全量 / 单库检查',i:'📊'},{k:'refresh',n:'精确刷新',i:'⚡'},
  {k:'node',n:'节点控制',i:'🎛️'},{k:'ops',n:'操作历史',i:'📜'},
  {k:'tmdb',n:'TMDB 元数据',i:'🧪'},
- {k:'playcheck',n:'不可播检修',i:'🎬'}];
+ {k:'playcheck',n:'不可播检修',i:'🎬'},
+ {k:'v4import',n:'入库兜底',i:'🎬'}];
 const EF2_NODE_META=[
  {k:'cloud115',n:'115 网盘',i:'☁️'},{k:'mtPoll',n:'MT 定期轮询',i:'🔄'},
  {k:'mtOrganize',n:'整理落位',i:'📦'},{k:'strmGen',n:'STRM 生成',i:'📝'},
@@ -16177,6 +16178,110 @@ const EF3_FIELDS=[['cover','封面'],['title','集标题'],['plot','剧情简介
 
 /* ── Tab: 不可播集检修（Size=NULL 失效集）── */
 let EF2_PLAY_ROWS=[];
+/* V4_FRONT_START */
+/* ── Tab: 入库兜底（备用方案·第二备选）── */
+let EF2_V4_ROWS=[], EF2_V4_SEL={}, EF2_V4_WATCH=null;
+async function ef2ViewV4(b){
+  const box=document.getElementById('ef2Body');
+  box.innerHTML='<div class="card"><h3 style="margin:0 0 10px">🎬 入库兜底 <span class="sub" style="font-weight:400;font-size:12px">MT 通知失败时的第二备选：物理已有 strm 但 Emby 未收录 → 单独入库</span></h3>'+
+    '<div class="sub" style="line-height:1.7;margin-bottom:12px">'+
+    '<b>主路径仍是 MT</b>：MT 整理完成会自己通知 Emby 刷新，本页只是<b>兜底</b>，不会干预 MT。<br>'+
+    '判定：物理目录里已有 .strm，但 Emby 库中查不到该条目 → 列入待入库。入库时补 TMDB 官方 NFO/封面，再建条目并单条目刷新（只针对该片，不扫整库）。</div>'+
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'+
+    '<button class="btn sm" style="background:#7c3aed;color:#fff" onclick="ef2V4Scan()">🔍 扫描待入库</button>'+
+    '<span class="sub">数据源</span><select id="ef2V4Mode" class="inp-sm">'+
+    '<option value="mt" selected>MT整理记录(快)</option>'+
+    '<option value="fs">全盘遍历(慢)</option></select>'+
+    '<span class="sub">范围</span><select id="ef2V4Since" class="inp-sm">'+
+    '<option value="0">全库</option><option value="1">近1天</option>'+
+    '<option value="3" selected>近3天</option><option value="7">近7天</option></select>'+
+    '<input id="ef2V4Sub" placeholder="分类子目录(可选，如 电影/动画电影/2020-2030)" style="width:260px" class="inp-sm">'+
+    '<button class="btn sec sm" onclick="ef2V4ImportSel()">⬇️ 入库所选</button>'+
+    '<label class="sub" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">'+
+    '<input type="checkbox" id="ef2V4Auto" onchange="ef2V4AutoSave(this.checked)"> 自动监控（兜底）</label>'+
+    '<span class="sub">间隔</span><input id="ef2V4Int" type="number" min="60" max="3600" step="60" value="300" style="width:80px" class="inp-sm">'+
+    '<button class="btn sec sm" onclick="ef2V4SaveInt()">保存</button>'+
+    '<span id="ef2V4Stat" class="sub"></span></div>'+
+    '<div id="ef2V4List"></div>'+
+    '<div id="ef2V4Log" style="margin-top:12px"></div></div>';
+  await ef2V4WatchGet();
+}
+async function ef2V4WatchGet(){
+  try{
+    const d=await apiPost('/api/embyfix/v4/watch',{});
+    EF2_V4_WATCH=d;
+    const a=document.getElementById('ef2V4Auto');if(a)a.checked=!!d.auto;
+    const i=document.getElementById('ef2V4Int');if(i)i.value=d.interval||300;
+    const st=document.getElementById('ef2V4Stat');
+    if(st)st.textContent='自动监控'+(d.auto?'已开':'已关')+' · 已兜底入库 '+(d.imported_count||0)+' 部';
+    const lg=document.getElementById('ef2V4Log');
+    if(lg&&d.log&&d.log.length){
+      let h='<div class="sub" style="margin-bottom:4px">最近日志</div><div class="e2-nout">';
+      d.log.slice(0,8).forEach(function(l){h+='<div class="e2-sub2">'+(l.ok?'✓':'✗')+' '+esc(l.at)+' '+esc(l.msg)+'</div>';});
+      lg.innerHTML=h+'</div>';
+    }
+  }catch(e){}
+}
+async function ef2V4AutoSave(on){
+  try{
+    const d=await apiPost('/api/embyfix/v4/watch/set',{auto:on});
+    if(d.ok){toast('自动监控'+(on?'已开启':'已关闭'),'ok');ef2V4WatchGet();}
+  }catch(e){toast('设置失败：'+e,'err');}
+}
+async function ef2V4SaveInt(){
+  const v=document.getElementById('ef2V4Int').value;
+  try{
+    const d=await apiPost('/api/embyfix/v4/watch/set',{interval:parseInt(v||'300',10)});
+    if(d.ok){toast('间隔已保存','ok');ef2V4WatchGet();}
+  }catch(e){toast('保存失败：'+e,'err');}
+}
+async function ef2V4Scan(){
+  const st=document.getElementById('ef2V4Stat'),lst=document.getElementById('ef2V4List');
+  st.textContent='扫描中…（遍历 strm 目录，稍等）';lst.innerHTML='<span class="e2-spin"></span>';
+  try{
+    const since=parseInt((document.getElementById('ef2V4Since')||{}).value||0,10);
+    const sub=(document.getElementById('ef2V4Sub')||{}).value||'';
+    const mode=(document.getElementById('ef2V4Mode')||{}).value||'mt';
+    const d=await apiPost('/api/embyfix/v4/pending',{limit:120,since_days:since,sub_path:sub.trim(),mode:mode});
+    if(!d.ok){st.textContent='扫描失败：'+(d.detail||'');return;}
+    EF2_V4_ROWS=d.rows||[];EF2_V4_SEL={};
+    st.textContent='待入库 '+EF2_V4_ROWS.length+' 部 · 耗时 '+d.secs+'s';
+    if(!EF2_V4_ROWS.length){lst.innerHTML='<div class="sub">✅ 没有待入库的片（物理 strm 都已被 Emby 收录）</div>';return;}
+    let h='<table class="ef-tb"><thead><tr><th style="width:36px"><input type="checkbox" onclick="ef2V4SelAll(this.checked)"></th><th>片名</th><th>TMDB</th><th>集/版本</th><th>路径</th><th>操作</th></tr></thead><tbody>';
+    EF2_V4_ROWS.forEach(function(r,i){
+      h+='<tr><td><input type="checkbox" id="ef2V4sel_'+i+'" onchange="EF2_V4_SEL['+i+']=this.checked"></td>'+
+        '<td>'+esc(r.name)+'</td>'+
+        '<td>'+(r.tmdbid||'-')+'</td>'+
+        '<td>'+r.strm_count+'</td>'+
+        '<td style="font-size:11px;opacity:.7">'+esc(String(r.path).replace('/strm','…'))+'</td>'+
+        '<td><button class="btn sec ef-mini" onclick="ef2V4ImportSel(['+i+'])">⬇️ 入库</button></td></tr>';
+    });
+    lst.innerHTML=h+'</tbody></table>';
+  }catch(e){st.textContent='扫描异常：'+e;lst.innerHTML='';}
+}
+function ef2V4SelAll(on){EF2_V4_ROWS.forEach(function(r,i){EF2_V4_SEL[i]=on;const el=document.getElementById('ef2V4sel_'+i);if(el)el.checked=on;});}
+async function ef2V4ImportSel(idx){
+  let list;
+  if(idx&&idx.length){list=idx.map(function(i){return EF2_V4_ROWS[i];});}
+  else{
+    list=[];
+    for(var k in EF2_V4_SEL){if(EF2_V4_SEL[k]&&EF2_V4_ROWS[k])list.push(EF2_V4_ROWS[k]);}
+  }
+  if(!list.length){toast('请先勾选要入库的片','err');return;}
+  const names=list.map(function(x){return x.name;}).join('、');
+  if(!confirm('为以下 '+list.length+' 部兜底入库？\n'+names.slice(0,300)+'\n\n将补 TMDB 官方 NFO/封面并单独入库（不扫整库）'))return;
+  toast('入库中…');
+  try{
+    const d=await apiPost('/api/embyfix/v4/import',{items:list});
+    if(d.ok){
+      toast('完成：成功 '+d.ok_count+'/'+d.total,'ok');
+      const bad=(d.results||[]).filter(function(r){return !r.ok;});
+      if(bad.length)alert('部分失败：\n'+bad.map(function(r){return r.name||r.path+' → '+r.msg;}).join('\n'));
+      ef2V4Scan();
+    }else toast('失败：'+(d.detail||''),'err');
+  }catch(e){toast('入库异常：'+e,'err');}
+}
+/* V4_FRONT_END */
 async function ef2ViewPlaycheck(b){
   const box=document.getElementById('ef2Body');
   box.innerHTML='<div class="card"><h3 style="margin:0 0 10px">🎬 不可播集检修 <span class="sub" style="font-weight:400;font-size:12px">检测 Emby 中 Size=NULL 的失效剧集版本</span></h3>'+

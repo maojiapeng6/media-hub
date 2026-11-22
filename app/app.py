@@ -30008,6 +30008,24 @@ class H(BaseHTTPRequestHandler):
             return self._j(embyfix_v2_node(
                 which=(b.get('which') or 'emby'), action=(b.get('action') or ''),
                 arg=(b.get('arg') or '')))
+        # ★ V4 入库兜底（备用方案·第二备选）：MT 通知失败时单独入库该片
+        if u.path == '/api/embyfix/v4/pending':
+            return self._j(embyfix_v4_pending(
+                which=(b.get('which') or 'emby'), library=(b.get('library') or ''),
+                limit=(b.get('limit') if b.get('limit') is not None else 80),
+                since_days=(b.get('since_days') if b.get('since_days') is not None else 0),
+                sub_path=(b.get('sub_path') or ''),
+                mode=(b.get('mode') or 'mt')))
+        if u.path == '/api/embyfix/v4/import':
+            return self._j(embyfix_v4_import(
+                which=(b.get('which') or 'emby'), items=(b.get('items') or []),
+                dry_run=bool(b.get('dry_run'))))
+        if u.path == '/api/embyfix/v4/watch':
+            return self._j(embyfix_v4_watch_get())
+        if u.path == '/api/embyfix/v4/watch/set':
+            return self._j(embyfix_v4_watch_set(
+                auto=(b.get('auto') if 'auto' in b else None),
+                interval=(b.get('interval') if b.get('interval') is not None else None)))
         # ★ V3 不可播集检修（Size=NULL 失效集）
         if u.path == '/api/embyfix/v3/playcheck':
             return self._j(embyfix_v3_playcheck(
@@ -34268,16 +34286,32 @@ def embyfix_v3_tmdb_meta(tmdbid='', name=''):
     if not tid or not tid.isdigit():
         out['detail'] = '需要有效 TMDBID（纯数字）'
         return out
+    # tv 优先；若 404/无数据则回退 movie（电影不该走 tv 接口）
     d = _tmdb_get('https://api.themoviedb.org/3/tv/%s?api_key=%s&language=zh-CN'
                   % (tid, tmdb_key()), t=25)
+    kind = 'tv'
     if not isinstance(d, dict) or '__err' in d or not d.get('id'):
-        out['detail'] = 'TMDB 剧集请求失败：' + str((d or {}).get('__err') or 'no-data')[:120]
-        return out
-    out['show'] = {'name': d.get('name') or '', 'overview': d.get('overview') or '',
+        dm = _tmdb_get('https://api.themoviedb.org/3/movie/%s?api_key=%s&language=zh-CN'
+                       % (tid, tmdb_key()), t=25)
+        if isinstance(dm, dict) and '__err' not in dm and dm.get('id'):
+            d = dm
+            kind = 'movie'
+        else:
+            out['detail'] = 'TMDB 请求失败(tv+movie)：' + str(
+                (d or {}).get('__err') or (dm or {}).get('__err') or 'no-data')[:120]
+            return out
+    out['kind'] = kind
+    out['show'] = {'name': d.get('name') or d.get('title') or '',
+                   'overview': d.get('overview') or '',
                    'genres': [g.get('name') for g in (d.get('genres') or []) if g.get('name')],
-                   'first_air': d.get('first_air_date') or '',
+                   'first_air': d.get('first_air_date') or d.get('release_date') or '',
                    'poster_path': d.get('poster_path') or '',
                    'backdrop_path': d.get('backdrop_path') or ''}
+    if kind == 'movie':
+        out['seasons'] = []
+        out['ok'] = True
+        out['detail'] = 'TMDB 官方(电影)：%s' % out['show']['name']
+        return out
     seasons = d.get('seasons') or []
     for s in seasons:
         sn = s.get('season_number')
@@ -34669,6 +34703,590 @@ def embyfix_v3_auto_repair(which='emby', library='', max_items=8, days=14, dry_r
 
 
 # ★ V3 不可播集检修：检测 Size=NULL 失效集（同集有有效版本=冗余可删 / 无有效版本=真缺）
+# ==== V4 START (入库兜底) ====
+# -*- coding: utf-8 -*-
+"""
+v4 入库兜底模块（备用方案 · 第二备选）
+
+背景：MT 整理完成后会通过 webhook 通知 Emby 刷新（主路径，本模块不干预）。
+      但 Emby 的增量通知（/Library/Media/Updated）对「全新目录/全新文件」无效，
+      库扫描（Refresh/全库任务）也未必及时纳入，导致「MT 已整理、strm 已生成，
+      但 Emby 里搜不到」。本模块作为【备用/第二备选】：
+        · 扫描：物理 strm 已存在、但 Emby library.db 里没有对应 item 的片 → 列为待入库
+        · 入库：为待入库片补 TMDB 官方 NFO/封面 → 建 Emby item → 单条目 Refresh
+        · 自动监控：定时扫描 + 自动兜底入库（可在 Web 开关，默认关闭）
+      全程只处理「DB 里查不到」的目录，绝不修改/删除已有 item，幂等安全。
+"""
+import os as _os
+import re as _re
+import json as _json
+import time as _time
+import uuid as _uuid
+import sqlite3 as _sqlite3
+
+V4_STATE_PATH = '/dockroot/media-hub/v4_import_state.json'
+V4_LOG = []
+
+
+def _v4_log(msg, ok=True):
+    line = {'at': _time.strftime('%m-%d %H:%M:%S'), 'ok': bool(ok), 'msg': str(msg)[:400]}
+    V4_LOG.insert(0, line)
+    del V4_LOG[60:]
+    return line
+
+
+def _v4_load_state():
+    try:
+        with open(V4_STATE_PATH, 'r', encoding='utf-8') as f:
+            return _json.load(f)
+    except Exception:
+        return {'auto': False, 'interval': 300, 'last_scan': 0, 'last_import': 0,
+                'imported': [], 'auto_enabled_libs': []}
+
+
+def _v4_save_state(st):
+    try:
+        d = _os.path.dirname(V4_STATE_PATH)
+        if d and not _os.path.isdir(d):
+            _os.makedirs(d, exist_ok=True)
+        with open(V4_STATE_PATH, 'w', encoding='utf-8') as f:
+            _json.dump(st, f, ensure_ascii=False, indent=1)
+        return True
+    except Exception as e:
+        _v4_log('状态保存失败: %s' % e, False)
+        return False
+
+
+def _v4_ems():
+    """取 Emby 库列表（Folder 类型），含 Path 与 ItemId。"""
+    out = []
+    try:
+        st, obj = _ef2_http(_ef2_inst('emby'), '/Library/VirtualFolders', t=20)
+        if st == 200 and isinstance(obj, list):
+            for v in obj:
+                out.append({'id': str(v.get('ItemId') or ''), 'name': v.get('Name') or '',
+                            'paths': v.get('Locations') or [], 'type': v.get('CollectionType') or ''})
+    except Exception as e:
+        _v4_log('取库列表失败: %s' % e, False)
+    return out
+
+
+def _v4_mt_db():
+    """MT 库路径（宿主机/容器可达候选）。"""
+    for p in ('/dockroot/mediatidy/data/mediatidy.db',
+              '/vol1/1000/docker/mediatidy/data/mediatidy.db'):
+        try:
+            if _os.path.isfile(p):
+                return p
+        except Exception:
+            pass
+    return ''
+
+
+def _v4_scan_by_mt(days=3, limit=80):
+    """【主数据源】用 MT 的整理记录定位「已整理但 Emby 未收录」的片。
+       MT 整理成功会写 organize_records(dest_path=最终落位, tmdb_id, media_type, created_at)，
+       这些正是「strm 已生成、Emby 还没入库」的片。比遍历文件系统快几个数量级。
+       再用 Emby library.db 核对是否已收录。"""
+    mt = _v4_mt_db()
+    db = _ef3_dbpath()
+    if not mt or not db:
+        return []
+    # 1) 取最近 N 天的整理记录，按「剧目录」聚合
+    try:
+        con = _sqlite3.connect('file:%s?mode=ro' % mt, timeout=60)
+        cur = con.cursor()
+        rows = cur.execute(
+            "SELECT dest_path, tmdb_id, media_type, title, created_at FROM organize_records "
+            "WHERE status='done' AND dest_path IS NOT NULL "
+            "AND created_at > datetime('now','-%d day') ORDER BY id DESC LIMIT 4000" % max(1, days)
+        ).fetchall()
+        con.close()
+    except Exception as e:
+        _v4_log('MT 库读取失败: %s' % e, False)
+        return []
+    if not rows:
+        return []
+    # dest_path = /主号/KFC/云盘影视/<类>/<年代>/<剧名> [tmdbid-x]/<文件或 Season 01/...>
+    groups = {}
+    for dp, tid, mtype, title, created in rows:
+        if not dp:
+            continue
+        parts = dp.split('/')
+        # 找含 [tmdbid-] 的目录层级
+        cut = None
+        for i, seg in enumerate(parts):
+            if '[tmdbid-' in seg:
+                cut = i
+                break
+        if cut is None:
+            continue
+        dir_parts = parts[:cut + 1]
+        # rel = 云盘影视/ 之下的「片目录」（截止到含 [tmdbid-] 的那一层），不含文件名
+        try:
+            ri = parts.index('云盘影视')
+            rel = '/'.join(parts[ri + 1:cut + 1])
+        except ValueError:
+            continue
+        key = rel
+        g = groups.setdefault(key, {'rel': rel, 'tmdbid': str(tid or ''),
+                                    'media_type': mtype or '', 'title': title or '',
+                                    'files': [], 'created': created})
+        if len(g['files']) < 60:
+            g['files'].append('/'.join(dir_parts) + '/' + '/'.join(parts[cut + 1:]))
+    # 2) 与 Emby DB 核对
+    have = set()
+    try:
+        con = _sqlite3.connect('file:%s?mode=ro' % db, timeout=60)
+        cur = con.cursor()
+        for (p,) in cur.execute("SELECT Path FROM MediaItems WHERE Path IS NOT NULL"):
+            have.add(p)
+        con.close()
+    except Exception as e:
+        _v4_log('Emby DB 读取失败: %s' % e, False)
+        return []
+    prefix = _ef2_inst('emby')['prefix']
+    strm_root = _ef2_inst('emby')['strm']
+    out = []
+    for g in groups.values():
+        emby_dir = prefix + '/' + g['rel']
+        if emby_dir in have:
+            continue
+        local_dir = _os.path.join(strm_root, g['rel'])
+        if not _os.path.isdir(local_dir):
+            continue
+        strms = []
+        try:
+            for f in _os.listdir(local_dir):
+                if f.endswith('.strm'):
+                    strms.append(f)
+        except Exception:
+            pass
+        sub_strms = []
+        try:
+            for d in _os.listdir(local_dir):
+                sp = _os.path.join(local_dir, d)
+                if _os.path.isdir(sp):
+                    for f in _os.listdir(sp):
+                        if f.endswith('.strm'):
+                            sub_strms.append(d + '/' + f)
+        except Exception:
+            pass
+        if not strms and not sub_strms:
+            continue
+        out.append({'path': emby_dir, 'local': local_dir,
+                    'name': _os.path.basename(local_dir),
+                    'tmdbid': g['tmdbid'], 'media_type': g['media_type'],
+                    'title': g['title'],
+                    'strm_count': len(strms) + len(sub_strms),
+                    'strms': strms[:6], 'sub_strms': sub_strms[:60],
+                    'is_series': bool(sub_strms), 'created': g['created']})
+        if len(out) >= limit:
+            break
+    out.sort(key=lambda x: x.get('created') or '', reverse=True)
+    return out
+
+
+def _v4_scan_lib(lib_id, lib_path, limit=80, since_days=0, sub_path=''):
+    """扫描一个库路径下：物理有 strm、但 DB 无 item 的片目录。返回待入库列表。
+       since_days>0：只看最近 N 天内修改过的片目录（大幅提速，用于自动监控）。
+       sub_path：只扫该子路径（相对库路径），用于「勾选某个媒体/分类」定向扫描。"""
+    db = _ef3_dbpath()
+    if not db:
+        return []
+    prefix = _ef2_inst('emby')['prefix']
+    strm_root = _ef2_inst('emby')['strm']
+    local_root = lib_path
+    if local_root.startswith(prefix):
+        local_root = local_root.replace(prefix, strm_root, 1)
+    if sub_path:
+        local_root = _os.path.join(local_root, sub_path.strip('/'))
+    if not _os.path.isdir(local_root):
+        return []
+    # DB 已有的 Path 集合（该库前缀下）
+    have = set()
+    try:
+        con = _sqlite3.connect('file:%s?mode=ro' % db, timeout=60)
+        cur = con.cursor()
+        q = "SELECT Path FROM MediaItems WHERE Path IS NOT NULL AND Path LIKE ?"
+        for (p,) in cur.execute(q, (lib_path.rstrip('/') + '/%',)):
+            have.add(p)
+        con.close()
+    except Exception as e:
+        _v4_log('DB 读取失败: %s' % e, False)
+        return []
+    cutoff = (_time.time() - since_days * 86400) if since_days else 0
+    found = []
+    try:
+        for dp, dns, fns in _os.walk(local_root):
+            dns[:] = [d for d in dns if not _os.path.islink(_os.path.join(dp, d))]
+            base = _os.path.basename(dp)
+            # 候选片/剧目录：目录名带 [tmdbid-xxx]
+            m = _re.search(r'\[tmdbid-(\d+)\]', base)
+            if not m:
+                continue
+            tid = m.group(1)
+            # 新鲜度过滤（自动监控用）：目录 mtime 太旧则跳过
+            if cutoff:
+                try:
+                    if _os.stat(dp).st_mtime < cutoff:
+                        continue
+                except Exception:
+                    pass
+            # 该目录下（直接或一层 Season 子目录）是否有 strm
+            strms = [f for f in fns if f.endswith('.strm')]
+            sub_strms = []
+            for d in dns:
+                try:
+                    for f in _os.listdir(_os.path.join(dp, d)):
+                        if f.endswith('.strm'):
+                            sub_strms.append(d + '/' + f)
+                except Exception:
+                    pass
+            if not strms and not sub_strms:
+                continue
+            rel = dp[len(local_root):].lstrip('/')
+            emby_path = (lib_path.rstrip('/') + '/' + rel) if rel else lib_path
+            if emby_path in have:
+                continue
+            found.append({
+                'path': emby_path,
+                'local': dp,
+                'name': base,
+                'tmdbid': tid,
+                'strm_count': len(strms) + len(sub_strms),
+                'strms': strms[:6],
+                'sub_strms': sub_strms[:60],
+                'is_series': bool(sub_strms),
+            })
+            if len(found) >= limit:
+                break
+    except Exception as e:
+        _v4_log('扫描异常: %s' % e, False)
+    return found
+
+
+def embyfix_v4_pending(which='emby', library='', limit=80, since_days=0, sub_path='',
+                        mode='mt'):
+    """列出待入库（物理已有 strm 但 Emby 未收录）的片。
+       mode='mt'（默认，快）：以 MT 整理记录为数据源，定位「刚整理完但 Emby 未收录」的片。
+       mode='fs'（慢，全量）：遍历 strm 目录树比对 Emby DB，用于 MT 记录缺失时深查。
+       since_days>0 只看最近改动（自动监控用）；sub_path 限定子目录（手动定向）。"""
+    t0 = _time.time()
+    rows = []
+    src = 'mt'
+    if mode == 'fs' or not _v4_mt_db():
+        src = 'fs'
+        libs = _v4_ems()
+        if library:
+            libs = [l for l in libs if l['id'] == str(library)]
+        for l in libs:
+            paths = l.get('paths') or []
+            if sub_path:
+                paths = [p.rstrip('/') + '/' + sub_path.strip('/') for p in paths]
+            for p in paths:
+                rows.extend(_v4_scan_lib(l['id'], p, limit=limit, since_days=since_days))
+                if len(rows) >= limit:
+                    break
+            if len(rows) >= limit:
+                break
+    else:
+        rows = _v4_scan_by_mt(days=since_days or 3, limit=limit)
+        if sub_path:
+            rows = [r for r in rows if sub_path.strip('/') in r.get('path', '')]
+    return {'ok': True, 'rows': rows[:limit], 'total': len(rows), 'source': src,
+            'since_days': since_days, 'sub_path': sub_path,
+            'secs': round(_time.time() - t0, 2)}
+
+
+def _v4_tmdb_meta(tid):
+    """取 TMDB 官方数据（tv / movie 自动判定）。返回 {kind, title, overview, year, poster, backdrop, runtime}"""
+    if not tid or not str(tid).isdigit():
+        return None
+    key = None
+    try:
+        key = tmdb_key()
+    except Exception:
+        return None
+    if not key:
+        return None
+    for kind in ('tv', 'movie'):
+        try:
+            d = _tmdb_get('https://api.themoviedb.org/3/%s/%s?api_key=%s&language=zh-CN'
+                          % (kind, tid, key), t=25)
+        except Exception:
+            continue
+        if isinstance(d, dict) and '__err' not in d and d.get('id'):
+            title = d.get('name') or d.get('title') or ''
+            year = d.get('first_air_date') or d.get('release_date') or ''
+            return {'kind': kind, 'title': title, 'overview': d.get('overview') or '',
+                    'year': str(year)[:4],
+                    'poster': ('https://image.tmdb.org/t/p/w500' + d['poster_path']) if d.get('poster_path') else '',
+                    'backdrop': ('https://image.tmdb.org/t/p/w1280' + d['backdrop_path']) if d.get('backdrop_path') else '',
+                    'genres': [g.get('name') for g in (d.get('genres') or []) if g.get('name')]}
+    return None
+
+
+def embyfix_v4_import(which='emby', items=None, dry_run=False):
+    """兜底入库：items=[{path, local, tmdbid, name}]
+       步骤：①补 TMDB 官方 NFO/封面 ②建 Emby Folder/Movie item ③单条目 Refresh
+       幂等：已存在则跳过；只新建不删除。"""
+    t0 = _time.time()
+    items = items or []
+    db = _ef3_dbpath()
+    if not db:
+        return {'ok': False, 'detail': 'library.db 不可达', 'results': []}
+    inst = _ef2_inst(which)
+    results = []
+    if not dry_run:
+        # 停服期间不可用；改为在线小批量插入（用事务，最后 checkpoint）
+        pass
+    try:
+        con = _sqlite3.connect(db, timeout=120)
+        cur = con.cursor()
+        con.execute('PRAGMA foreign_keys=OFF')
+        maxkey = cur.execute('SELECT max(UserDataKeyId) FROM UserDatas').fetchone()[0] or 0
+        users = [x[0] for x in cur.execute('SELECT DISTINCT userId FROM UserDatas')]
+        now = int(_time.time())
+        for it in items:
+            path = it.get('path') or ''
+            local = it.get('local') or ''
+            tid = it.get('tmdbid') or ''
+            name = it.get('name') or _os.path.basename(local)
+            try:
+                if cur.execute('SELECT Id FROM MediaItems WHERE Path=?', (path,)).fetchone():
+                    results.append({'path': path, 'ok': True, 'skipped': True, 'msg': '已存在，跳过'})
+                    continue
+                # 父目录 item（年代/分类文件夹）→ 找最近存在的父 Folder
+                parent = path.rstrip('/').rsplit('/', 1)[0]
+                pid = None
+                for up in range(3):
+                    row = cur.execute('SELECT Id,type FROM MediaItems WHERE Path=?', (parent,)).fetchone()
+                    if row:
+                        pid = row[0]
+                        break
+                    parent = parent.rstrip('/').rsplit('/', 1)[0]
+                if not pid:
+                    results.append({'path': path, 'ok': False, 'msg': '找不到父文件夹(%s)' % parent})
+                    continue
+                # 官方元数据
+                meta = None
+                if tid:
+                    meta = _v4_tmdb_meta(tid)
+                title = name
+                year = ''
+                m = _re.search(r'\((\d{4})\)', name)
+                if m:
+                    year = m.group(1)
+                overview = ''
+                poster_url = ''
+                if meta:
+                    title = meta.get('title') or title
+                    year = meta.get('year') or year
+                    overview = meta.get('overview') or ''
+                    poster_url = meta.get('poster') or ''
+                # 写 NFO（让 Emby 读到官方元数据）；tv 用 tvshow.nfo，movie 用 movie.nfo
+                mtype = (it.get('media_type') or '').lower()
+                if overview and _os.path.isdir(local):
+                    if mtype == 'tv':
+                        nfo = ('<?xml version="1.0" encoding="UTF-8"?>\n<tvshow>\n'
+                               '  <title>%s</title>\n  <year>%s</year>\n  <plot>%s</plot>\n'
+                               '  <tmdbid>%s</tmdbid>\n</tvshow>\n') % (
+                                   title, year, overview.replace('&', '&amp;'), tid)
+                        nfo_name = 'tvshow.nfo'
+                    else:
+                        nfo = ('<?xml version="1.0" encoding="UTF-8"?>\n<movie>\n'
+                               '  <title>%s</title>\n  <year>%s</year>\n  <plot>%s</plot>\n'
+                               '  <tmdbid>%s</tmdbid>\n</movie>\n') % (
+                                   title, year, overview.replace('&', '&amp;'), tid)
+                        nfo_name = 'movie.nfo'
+                    try:
+                        with open(_os.path.join(local, nfo_name), 'w', encoding='utf-8') as f:
+                            f.write(nfo)
+                    except Exception:
+                        pass
+                # 海报：优先用 meta 的图 URL；否则留空（后续 Refresh 可补）
+                if poster_url and _os.path.isdir(local):
+                    try:
+                        _v4_dl(poster_url, _os.path.join(local, 'poster.jpg'))
+                    except Exception:
+                        pass
+                # 建 Folder(type=3)
+                key = maxkey + 1
+                maxkey += 1
+                img = None
+                pp = _os.path.join(local, 'poster.jpg')
+                if _os.path.isfile(pp):
+                    img = path + '/poster.jpg*' + str(_os.path.getsize(pp))
+                cur.execute('INSERT INTO MediaItems (Name,SortName,type,ParentId,Path,'
+                            'PresentationUniqueKey,guid,UserDataKeyId,Images,DateCreated,'
+                            'DateLastRefreshed,DateLastSaved) VALUES (?,?,3,?,?,?,?,?,?,?,?,?)',
+                            (name, name, pid, path, _uuid.uuid4().hex, _uuid.uuid4().bytes,
+                             key, img, now, now, now))
+                fid = cur.execute('SELECT last_insert_rowid()').fetchone()[0]
+                for uid in users:
+                    cur.execute('INSERT INTO UserDatas (UserDataKeyId,userId,rating,played,'
+                                'playCount,isFavorite,HideFromResume,playbackPositionTicks,'
+                                'RatingLastModified,PlaystateLastModified,DateLastSearchedInt) '
+                                'VALUES (?,?,0,0,0,0,0,0,0,0,0)', (key, uid))
+                # 建 Movie(type=5)：直接目录下的 strm + Season 子目录下的 strm
+                strm_list = []
+                try:
+                    strm_list = [f for f in _os.listdir(local) if f.endswith('.strm')]
+                except Exception:
+                    pass
+                for sd in (it.get('sub_strms') or []):
+                    try:
+                        for f in _os.listdir(_os.path.join(local, sd)):
+                            if f.endswith('.strm'):
+                                strm_list.append(os.path.join(sd, f))
+                    except Exception:
+                        pass
+                mcount = 0
+                movie_ids = []
+                for f in strm_list:
+                    sp = _os.path.join(local, f)
+                    if not _os.path.isfile(sp):
+                        continue
+                    key = maxkey + 1
+                    maxkey += 1
+                    cur.execute('INSERT INTO MediaItems (Name,SortName,type,ParentId,Path,'
+                                'ProviderIds,PresentationUniqueKey,guid,UserDataKeyId,Images,'
+                                'DateCreated,DateLastRefreshed,DateLastSaved) '
+                                'VALUES (?,?,5,?,?,?,?,?,?,?,?,?,?)',
+                                (title, title, fid, path + '/' + f,
+                                 ('Tmdb=%s' % tid) if tid else None,
+                                 _uuid.uuid4().hex, _uuid.uuid4().bytes, key, img, now, now, now))
+                    movie_ids.append(cur.execute('SELECT last_insert_rowid()').fetchone()[0])
+                    for uid in users:
+                        cur.execute('INSERT INTO UserDatas (UserDataKeyId,userId,rating,played,'
+                                    'playCount,isFavorite,HideFromResume,playbackPositionTicks,'
+                                    'RatingLastModified,PlaystateLastModified,DateLastSearchedInt) '
+                                    'VALUES (?,?,0,0,0,0,0,0,0,0,0)', (key, uid))
+                    mcount += 1
+                results.append({'path': path, 'ok': True, 'folder_id': fid, 'movies': mcount,
+                                'movie_ids': movie_ids,
+                                'title': title, 'msg': '已建 Folder + %d 集' % mcount})
+                # 单条目 Refresh（让 Emby 读 NFO/封面）：Folder + 每个 Movie
+                try:
+                    st, _o = _ef2_http(inst, '/Items/%s/Refresh' % fid, 'POST',
+                                       params={'Recursive': 'true',
+                                               'MetadataRefreshMode': 'FullRefresh',
+                                               'ImageRefreshMode': 'FullRefresh'}, t=60)
+                    if st not in (200, 204):
+                        results[-1]['refresh'] = 'HTTP %s' % st
+                    for mid in movie_ids[:12]:
+                        try:
+                            _ef2_http(inst, '/Items/%s/Refresh' % mid, 'POST',
+                                      params={'Recursive': 'false',
+                                              'MetadataRefreshMode': 'FullRefresh',
+                                              'ImageRefreshMode': 'FullRefresh'}, t=45)
+                        except Exception:
+                            pass
+                except Exception as e:
+                    results[-1]['refresh'] = str(e)[:60]
+            except Exception as e:
+                results.append({'path': path, 'ok': False, 'msg': str(e)[:150]})
+        con.commit()
+        try:
+            cur.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+        except Exception:
+            pass
+        con.close()
+    except Exception as e:
+        return {'ok': False, 'detail': 'DB 操作失败: %s' % e, 'results': results}
+    ok_n = sum(1 for r in results if r.get('ok'))
+    st = _v4_load_state()
+    for r in results:
+        if r.get('ok') and not r.get('skipped'):
+            st['imported'] = (st.get('imported') or []) + [r.get('path')]
+    st['imported'] = st['imported'][-300:]
+    st['last_import'] = int(_time.time())
+    _v4_save_state(st)
+    return {'ok': True, 'results': results, 'ok_count': ok_n, 'total': len(results),
+            'secs': round(_time.time() - t0, 2)}
+
+
+def _v4_dl(url, dest):
+    """下载图片（走面板配置的代理，零配置开源：不硬编码任何地址）。"""
+    import urllib.request as _u
+    import ssl as _ssl
+    ctx = _ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = _ssl.CERT_NONE
+    px = ''
+    try:
+        px = tmdb_proxy() or ''
+    except Exception:
+        px = ''
+    try:
+        op = _u.build_opener(_u.ProxyHandler({'http': px, 'https': px}) if px else _u.ProxyHandler({}),
+                             _u.HTTPSHandler(context=ctx))
+    except Exception:
+        op = _u.build_opener(_u.HTTPSHandler(context=ctx))
+    data = op.open(url, timeout=30).read()
+    with open(dest, 'wb') as f:
+        f.write(data)
+    return len(data)
+
+
+def embyfix_v4_watch_get():
+    st = _v4_load_state()
+    return {'ok': True, 'auto': bool(st.get('auto')),
+            'interval': int(st.get('interval') or 300),
+            'last_scan': st.get('last_scan'), 'last_import': st.get('last_import'),
+            'imported_count': len(st.get('imported') or []),
+            'log': V4_LOG[:20]}
+
+
+def embyfix_v4_watch_set(auto=None, interval=None):
+    st = _v4_load_state()
+    if auto is not None:
+        st['auto'] = bool(auto)
+    if interval is not None:
+        try:
+            iv = int(interval)
+            st['interval'] = max(60, min(iv, 3600))
+        except Exception:
+            pass
+    _v4_save_state(st)
+    _v4_log('自动监控 %s，间隔 %ss' % ('开' if st.get('auto') else '关', st.get('interval')))
+    return embyfix_v4_watch_get()
+
+
+def _v4_watchdog():
+    """自动监控：周期扫描未入库的片 → 兜底入库（备用方案，MT 为主路径不受影响）。"""
+    while True:
+        try:
+            _time.sleep(60)
+            st = _v4_load_state()
+            if not st.get('auto'):
+                continue
+            iv = int(st.get('interval') or 300)
+            now = _time.time()
+            if now - float(st.get('last_scan') or 0) < iv:
+                continue
+            st['last_scan'] = now
+            _v4_save_state(st)
+            # 只看最近 3 天改动的片目录（快）；MT 主路径没生效的新片才会落在这里
+            pend = embyfix_v4_pending('emby', '', limit=12, since_days=3)
+            rows = pend.get('rows') or []
+            if not rows:
+                continue
+            _v4_log('自动兜底：发现 %d 部待入库' % len(rows))
+            embyfix_v4_import('emby', rows, dry_run=False)
+            _v4_log('自动兜底完成')
+        except Exception as e:
+            try:
+                _v4_log('自动兜底异常: %s' % e, False)
+            except Exception:
+                pass
+
+
+threading.Thread(target=_v4_watchdog, daemon=True).start()
+
+# ==== V4 END ====
+
 def embyfix_v3_playcheck(which='emby', library='', limit=30):
     """安全模式：自动判据暂停用（Size是陈旧缓存不可信、流测试鉴权不可用）。
        返回诚实提示，引导用播放器实测 + 检查115实体 + 修正strm。"""
