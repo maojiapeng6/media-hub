@@ -16197,6 +16197,8 @@ async function ef2ViewV4(b){
     '<option value="3" selected>近3天</option><option value="7">近7天</option></select>'+
     '<input id="ef2V4Sub" placeholder="分类子目录(可选，如 电影/动画电影/2020-2030)" style="width:260px" class="inp-sm">'+
     '<button class="btn sec sm" onclick="ef2V4ImportSel()">⬇️ 入库所选</button>'+
+    '<button class="btn sec sm" onclick="ef2V4PosterCheck()">🖼️ 校验封面</button>'+
+    '<button class="btn sec sm" onclick="ef2V4PosterFix()">✨ 对齐TMDB封面</button>'+
     '<label class="sub" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">'+
     '<input type="checkbox" id="ef2V4Auto" onchange="ef2V4AutoSave(this.checked)"> 自动监控（兜底）</label>'+
     '<span class="sub">间隔</span><input id="ef2V4Int" type="number" min="60" max="3600" step="60" value="300" style="width:80px" class="inp-sm">'+
@@ -16280,6 +16282,47 @@ async function ef2V4ImportSel(idx){
       ef2V4Scan();
     }else toast('失败：'+(d.detail||''),'err');
   }catch(e){toast('入库异常：'+e,'err');}
+}
+
+
+/* V4 封面校验/对齐（保证与 TMDB 官网一致） */
+let EF2_V4_POSTERS=[];
+async function ef2V4PosterCheck(){
+  const st=document.getElementById('ef2V4Stat');
+  st.textContent='校验封面中…（逐片比对 TMDB 官网主视觉）';
+  try{
+    const d=await apiPost('/api/embyfix/v4/poster/check',{limit:60});
+    if(!d.ok){st.textContent='校验失败：'+(d.detail||'');return;}
+    EF2_V4_POSTERS=d.rows||[];
+    st.textContent='封面与TMDB官网不一致：'+EF2_V4_POSTERS.length+' 部（耗时 '+d.secs+'s）';
+    if(!EF2_V4_POSTERS.length){return;}
+    let h='<div class="sub" style="margin:10px 0 4px">以下片的本地封面 ≠ TMDB 官网主视觉：</div><table class="ef-tb"><thead><tr><th>片名</th><th>TMDB</th><th>操作</th></tr></thead><tbody>';
+    EF2_V4_POSTERS.forEach(function(r,i){
+      h+='<tr><td>'+esc(r.name)+'</td><td>'+(r.tmdbid||'-')+'</td>'+
+        '<td><button class="btn sec ef-mini" onclick="ef2V4PosterFixOne('+i+')">对齐</button></td></tr>';
+    });
+    const box=document.getElementById('ef2V4List');
+    box.innerHTML=(box.innerHTML||'')+h+'</tbody></table>';
+  }catch(e){st.textContent='校验异常：'+e;}
+}
+async function ef2V4PosterFixOne(i){
+  const r=EF2_V4_POSTERS[i];if(!r)return;
+  toast('对齐中…');
+  try{
+    const d=await apiPost('/api/embyfix/v4/poster/fix',{tmdbids:[r.tmdbid],limit:60});
+    if(d.ok){toast((d.results&&d.results[0]&&d.results[0].msg)||'已对齐','ok');ef2V4PosterCheck();}
+    else toast('失败','err');
+  }catch(e){toast('异常：'+e,'err');}
+}
+async function ef2V4PosterFix(){
+  if(!EF2_V4_POSTERS.length){toast('请先点「校验封面」','err');return;}
+  if(!confirm('将 '+EF2_V4_POSTERS.length+' 部的本地封面覆盖为 TMDB 官网主视觉（官方详情接口 poster_path）？\n同时重建 Emby 图片索引。'))return;
+  toast('对齐中…');
+  try{
+    const d=await apiPost('/api/embyfix/v4/poster/fix',{tmdbids:EF2_V4_POSTERS.map(function(r){return r.tmdbid;}),limit:60});
+    if(d.ok){toast('完成 '+d.ok_count+'/'+d.total,'ok');ef2V4PosterCheck();}
+    else toast('失败','err');
+  }catch(e){toast('异常：'+e,'err');}
 }
 /* V4_FRONT_END */
 async function ef2ViewPlaycheck(b){

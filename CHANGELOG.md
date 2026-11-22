@@ -1,5 +1,14 @@
 # Changelog
 
+## [4.2.20] - 2026-11-22 · 封面与 TMDB 官网严格一致（主视觉判据纠错）
+
+- **问题**：Emby 显示的海报 ≠ TMDB 官网主视觉（如《斗破苍穹剧场版 双帝之战》官网是红色双雄图，Emby 显示蓝紫火焰图）
+- **🔴 三处判据全错**（实测查证）：① **MT 缓存的 `poster_path` 已过时**（TMDB 后来换了官网主视觉，缓存没更新）；② **Emby 会按 vote 排序从 `images.posters` 列表自己挑一张**（≠官网主视觉）；③ 官网主视觉 = **详情接口 `poster_path`**，与 images 列表里的任何一张都可能是不同的
+- **修正**：统一以 **详情接口 `poster_path`/`backdrop_path`** 为唯一依据；Refresh 改用 `MetadataRefreshMode=Default`（FullRefresh 会触发 TMDB 在线重刮削并覆盖成 vote 最高那张）；**不再手写 Emby 的 `Images` 字段**（Emby 专用格式 `path*hash*Primary*0*0*null`，手写 `path*size` 会让 Emby 报 "Object reference not set"），改为清空后让 Emby 自行生成，再把父 Folder 的 Images 复制给电影条目（目录级 poster.jpg 只被 Folder 采用）
+- **Web 新增**：「🎬 入库兜底」页签内加「🖼️ 校验封面」+「✨ 对齐TMDB封面」按钮；校验用 **JPEG 像素尺寸在 TMDB images 列表中定位本地是哪一张**（不下载图片，快）
+- **自动监控**：兜底入库后自动追加一次封面对齐，保证新片封面直接是官网主视觉
+- 双帝已对齐并实测：Emby 实际返回的图与 TMDB 官网主视觉一致（308641 字节 = 官网 original）
+
 ## [4.2.19] - 2026-11-22 · 入库兜底（v4·备用第二备选）+ 斗破双帝之战入库
 
 - **问题**：MT 整理完成、strm 已生成，但 Emby 里搜不到（如《斗破苍穹剧场版 双帝之战》）。根因=Emby 增量通知(`/Library/Media/Updated`)对**全新目录/文件无效**，库 Refresh 也不导入新文件；而 MT 的 webhook 通知路径本轮未生效

@@ -30020,6 +30020,15 @@ class H(BaseHTTPRequestHandler):
             return self._j(embyfix_v4_import(
                 which=(b.get('which') or 'emby'), items=(b.get('items') or []),
                 dry_run=bool(b.get('dry_run'))))
+        if u.path == '/api/embyfix/v4/poster/check':
+            return self._j(embyfix_v4_poster_check(
+                limit=(b.get('limit') if b.get('limit') is not None else 60),
+                only_new=bool(b.get('only_new'))))
+        if u.path == '/api/embyfix/v4/poster/fix':
+            return self._j(embyfix_v4_poster_fix(
+                tmdbids=(b.get('tmdbids') or []),
+                limit=(b.get('limit') if b.get('limit') is not None else 60),
+                dry_run=bool(b.get('dry_run'))))
         if u.path == '/api/embyfix/v4/watch':
             return self._j(embyfix_v4_watch_get())
         if u.path == '/api/embyfix/v4/watch/set':
@@ -34966,6 +34975,198 @@ def _v4_scan_lib(lib_id, lib_path, limit=80, since_days=0, sub_path=''):
     return found
 
 
+def _v4_emby_img_md5(path):
+    import hashlib as _h
+    try:
+        return _h.md5(open(path, 'rb').read()).hexdigest()
+    except Exception:
+        return ''
+
+
+def _v4_jpeg_size(path):
+    """纯 Python 读取 JPEG 像素尺寸（不依赖 PIL）。"""
+    import struct as _s
+    try:
+        with open(path, 'rb') as f:
+            data = f.read()
+        i = 2
+        while i < len(data) - 9:
+            if data[i] != 0xFF:
+                i += 1
+                continue
+            m = data[i + 1]
+            if m in (0xD8, 0x01) or 0xD0 <= m <= 0xD7:
+                i += 2
+                continue
+            ln = _s.unpack('>H', data[i + 2:i + 4])[0]
+            if m in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
+                     0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                h, w = _s.unpack('>HH', data[i + 5:i + 9])
+                return (w, h)
+            i += 2 + ln
+    except Exception:
+        pass
+    return None
+
+
+def embyfix_v4_poster_check(limit=60, only_new=True):
+    """校验本地封面是否 == TMDB 官网主视觉。
+       🔴 判据：TMDB 详情接口的 poster_path（官网主视觉）。
+       本地图是哪一张 → 用 JPEG 像素尺寸在 TMDB images.posters 列表里匹配（不下载图片，快）。
+       只读。返回不符的片。"""
+    t0 = _time.time()
+    db = _ef3_dbpath()
+    if not db:
+        return {'ok': False, 'detail': 'library.db 不可达', 'rows': []}
+    strm_root = _ef2_inst('emby')['strm']
+    lo = ('Id>=3498000' if only_new else '1=1')
+    sql = ("SELECT Id,Name,Path,ProviderIds,ParentId FROM MediaItems "
+           "WHERE type=5 AND %s AND ProviderIds LIKE '%%Tmdb=%%'" % lo)
+    rows = _ef3_sql(db, sql) or []
+    out = []
+    okc = 0
+    cache = {}
+    for r in rows:
+        if '__err' in r:
+            continue
+        m = _re.search(r'Tmdb=(\d+)', r.get('ProviderIds') or '')
+        if not m:
+            continue
+        tid = m.group(1)
+        path = r.get('Path') or ''
+        dd = _os.path.join(strm_root, path.replace('/strm/', '', 1).rsplit('/', 1)[0])
+        pj = _os.path.join(dd, 'poster.jpg')
+        if not _os.path.isfile(pj):
+            continue
+        if tid not in cache:
+            cache[tid] = _v4_tmdb_meta(tid)
+        meta = cache[tid]
+        if not meta:
+            continue
+        main = meta.get('poster') or ''            # 官网主视觉 URL
+        main_path = main.split('/t/p/')[-1].split('/')[-1] if main else ''
+        sz = _v4_jpeg_size(pj)
+        matched = ''
+        try:
+            for p in (meta.get('posters') or []):
+                if p.get('width') == sz[0] and p.get('height') == sz[1]:
+                    matched = p.get('file_path') or ''
+                    break
+        except Exception:
+            pass
+        if matched == main_path:
+            okc += 1
+            continue
+        out.append({'eid': r.get('Id'), 'name': r.get('Name') or '', 'tmdbid': tid,
+                    'parent': r.get('ParentId'), 'dir': dd, 'poster': pj,
+                    'media_type': meta.get('kind'), 'title': meta.get('title'),
+                    'matched': matched or '(尺寸未匹配)', 'main': main_path})
+        if len(out) >= limit:
+            break
+    return {'ok': True, 'rows': out, 'total': len(out), 'matched_count': okc,
+            'note': '本地封面 ≠ TMDB官网主视觉（详情接口 poster_path）',
+            'secs': round(_time.time() - t0, 2)}
+
+
+def embyfix_v4_poster_fix(tmdbids=None, limit=60, dry_run=False):
+    """校正封面：把本地 poster/fanart 覆盖为 TMDB 官网主视觉，
+       并让 Emby 采用（清 Images → Default Refresh → 复制父 Folder 的 Images 给电影条目）。
+       只改图片，不动其它元数据。"""
+    t0 = _time.time()
+    db = _ef3_dbpath()
+    if not db:
+        return {'ok': False, 'detail': 'library.db 不可达', 'results': []}
+    inst = _ef2_inst('emby')
+    chk = embyfix_v4_poster_check(limit=limit)
+    rows = chk.get('rows') or []
+    if tmdbids:
+        want = set(str(x) for x in tmdbids)
+        rows = [r for r in rows if str(r.get('tmdbid')) in want]
+    results = []
+    for r in rows:
+        try:
+            meta = _v4_tmdb_meta(str(r.get('tmdbid')))
+            if not meta or not meta.get('poster'):
+                results.append({'name': r.get('name'), 'ok': False, 'msg': 'TMDB 无主视觉'})
+                continue
+            if not dry_run:
+                _v4_write(os.path.join(r['dir'], 'poster.jpg'), _v4_fetch(meta['poster']))
+                if meta.get('backdrop'):
+                    try:
+                        _v4_write(os.path.join(r['dir'], 'fanart.jpg'), _v4_fetch(meta['backdrop']))
+                    except Exception:
+                        pass
+                # 🔴 给 strm 配「同名图片」：Emby 对电影条目只会找与 strm 同名的图
+                #    （<名>-poster.jpg / <名>.jpg），目录级 poster.jpg 只被 Folder 采用。
+                #    配好后 Emby 自行关联，无需手写 Images 字段。
+                try:
+                    for f in _os.listdir(r['dir']):
+                        if not f.endswith('.strm'):
+                            continue
+                        sb = f[:-5]
+                        src = os.path.join(r['dir'], 'poster.jpg')
+                        for suffix in ('-poster.jpg', '.jpg'):
+                            tgt = os.path.join(r['dir'], sb + suffix)
+                            if not _os.path.exists(tgt):
+                                try:
+                                    _v4_write(tgt, _v4_fetch(meta['poster']))
+                                except Exception:
+                                    pass
+                except Exception:
+                    pass
+                # 清 Images（Emby 专用格式不能手写）→ 刷新让它自己重建
+                con = _sqlite3.connect(db, timeout=60)
+                cur = con.cursor()
+                now = int(_time.time())
+                cur.execute('UPDATE MediaItems SET Images=NULL, DateLastRefreshed=? WHERE Id=?',
+                            (now, r.get('eid')))
+                cur.execute('UPDATE MediaItems SET Images=NULL, DateLastRefreshed=? WHERE Id=?',
+                            (now, r.get('parent')))
+                con.commit()
+                con.close()
+                # Default 模式 Refresh：不触发 TMDB 在线重刮削，Emby 自行读本地
+                _ef2_http(inst, '/Items/%s/Refresh' % r.get('parent'), 'POST',
+                          params={'Recursive': 'true', 'MetadataRefreshMode': 'Default',
+                                  'ImageRefreshMode': 'Default'}, t=60)
+                _time.sleep(1.0)
+                _ef2_http(inst, '/Items/%s/Refresh' % r.get('eid'), 'POST',
+                          params={'Recursive': 'false', 'MetadataRefreshMode': 'Default',
+                                  'ImageRefreshMode': 'Default'}, t=45)
+            results.append({'name': r.get('name'), 'tmdbid': r.get('tmdbid'),
+                            'ok': True, 'msg': '已校正为 TMDB 官网主视觉'})
+        except Exception as e:
+            results.append({'name': r.get('name'), 'ok': False, 'msg': str(e)[:120]})
+    _v4_log('封面校正 %d/%d 成功' % (sum(1 for x in results if x.get('ok')), len(results)))
+    return {'ok': True, 'results': results, 'ok_count': sum(1 for x in results if x.get('ok')),
+            'total': len(results), 'dry_run': bool(dry_run),
+            'secs': round(_time.time() - t0, 2)}
+
+
+def _v4_write(path, data):
+    with open(path, 'wb') as f:
+        f.write(data)
+    return len(data)
+
+
+def _v4_fetch(url, t=40):
+    import urllib.request as _u
+    import ssl as _ssl
+    ctx = _ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = _ssl.CERT_NONE
+    px = ''
+    try:
+        px = tmdb_proxy() or ''
+    except Exception:
+        px = ''
+    try:
+        op = _u.build_opener(_u.ProxyHandler({'http': px, 'https': px}) if px else _u.ProxyHandler({}),
+                             _u.HTTPSHandler(context=ctx))
+    except Exception:
+        op = _u.build_opener(_u.HTTPSHandler(context=ctx))
+    return op.open(url, timeout=t).read()
+
+
 def embyfix_v4_pending(which='emby', library='', limit=80, since_days=0, sub_path='',
                         mode='mt'):
     """列出待入库（物理已有 strm 但 Emby 未收录）的片。
@@ -34991,16 +35192,20 @@ def embyfix_v4_pending(which='emby', library='', limit=80, since_days=0, sub_pat
             if len(rows) >= limit:
                 break
     else:
-        rows = _v4_scan_by_mt(days=since_days or 3, limit=limit)
-        if sub_path:
-            rows = [r for r in rows if sub_path.strip('/') in r.get('path', '')]
+            rows = _v4_scan_by_mt(days=since_days or 3, limit=limit)
+            if sub_path:
+                rows = [r for r in rows if sub_path.strip('/') in r.get('path', '')]
     return {'ok': True, 'rows': rows[:limit], 'total': len(rows), 'source': src,
             'since_days': since_days, 'sub_path': sub_path,
             'secs': round(_time.time() - t0, 2)}
 
 
 def _v4_tmdb_meta(tid):
-    """取 TMDB 官方数据（tv / movie 自动判定）。返回 {kind, title, overview, year, poster, backdrop, runtime}"""
+    """取 TMDB 官方数据（tv / movie 自动判定）。
+       🔴 海报/背景必须用【详情接口】的 poster_path / backdrop_path —— 那才是 TMDB 官网主视觉。
+       images.posters 列表是「所有上传过的图」，Emby 会按 vote 排序自己挑一张，
+       与官网主视觉往往不同（如同一 TMDBID 官网换了主视觉、images 列表仍是旧的）。
+       返回 {kind, title, overview, year, poster, backdrop, genres}"""
     if not tid or not str(tid).isdigit():
         return None
     key = None
@@ -35019,10 +35224,23 @@ def _v4_tmdb_meta(tid):
         if isinstance(d, dict) and '__err' not in d and d.get('id'):
             title = d.get('name') or d.get('title') or ''
             year = d.get('first_air_date') or d.get('release_date') or ''
+            # ★ 只认详情接口的主视觉
+            poster = ('https://image.tmdb.org/t/p/original' + d['poster_path']) if d.get('poster_path') else ''
+            backdrop = ('https://image.tmdb.org/t/p/original' + d['backdrop_path']) if d.get('backdrop_path') else ''
+            # images 列表（仅用于识别「本地图是哪一张」，不作为选图依据）
+            posters = []
+            try:
+                im = _tmdb_get('https://api.themoviedb.org/3/%s/%s/images?api_key=%s'
+                               % (kind, tid, key), t=20)
+                if isinstance(im, dict):
+                    for p in (im.get('posters') or [])[:20]:
+                        posters.append({'file_path': p.get('file_path') or '',
+                                        'width': p.get('width'), 'height': p.get('height')})
+            except Exception:
+                pass
             return {'kind': kind, 'title': title, 'overview': d.get('overview') or '',
                     'year': str(year)[:4],
-                    'poster': ('https://image.tmdb.org/t/p/w500' + d['poster_path']) if d.get('poster_path') else '',
-                    'backdrop': ('https://image.tmdb.org/t/p/w1280' + d['backdrop_path']) if d.get('backdrop_path') else '',
+                    'poster': poster, 'backdrop': backdrop, 'posters': posters,
                     'genres': [g.get('name') for g in (d.get('genres') or []) if g.get('name')]}
     return None
 
@@ -35105,19 +35323,40 @@ def embyfix_v4_import(which='emby', items=None, dry_run=False):
                             f.write(nfo)
                     except Exception:
                         pass
-                # 海报：优先用 meta 的图 URL；否则留空（后续 Refresh 可补）
-                if poster_url and _os.path.isdir(local):
+                # 海报/背景：只用 TMDB 官网主视觉（详情接口 poster_path/backdrop_path）
+                if _os.path.isdir(local):
+                    if poster_url:
+                        try:
+                            _v4_dl(poster_url, _os.path.join(local, 'poster.jpg'))
+                        except Exception:
+                            pass
+                    backdrop_url = (meta or {}).get('backdrop') or ''
+                    if backdrop_url:
+                        try:
+                            _v4_dl(backdrop_url, _os.path.join(local, 'fanart.jpg'))
+                        except Exception:
+                            pass
+                # 🔴 给 strm 配「同名图片」：Emby 对电影条目只认与 strm 同名的图
+                #    （<名>-poster.jpg / <名>.jpg）；目录级 poster.jpg 只被 Folder 采用。
+                if poster_url:
                     try:
-                        _v4_dl(poster_url, _os.path.join(local, 'poster.jpg'))
+                        for f in strm_list:
+                            sb = f[:-5] if f.endswith('.strm') else f
+                            for suffix in ('-poster.jpg', '.jpg'):
+                                tgt = _os.path.join(local, sb + suffix)
+                                if not _os.path.exists(tgt):
+                                    try:
+                                        _v4_dl(poster_url, tgt)
+                                    except Exception:
+                                        pass
                     except Exception:
                         pass
                 # 建 Folder(type=3)
                 key = maxkey + 1
                 maxkey += 1
+                # 不写 Images 字段：Emby 的 Images 有专用格式(path*hash*Primary*0*0*null)，
+                # 手写(path*size) 会让 Emby 读取报错；交给 Emby 自己生成。
                 img = None
-                pp = _os.path.join(local, 'poster.jpg')
-                if _os.path.isfile(pp):
-                    img = path + '/poster.jpg*' + str(_os.path.getsize(pp))
                 cur.execute('INSERT INTO MediaItems (Name,SortName,type,ParentId,Path,'
                             'PresentationUniqueKey,guid,UserDataKeyId,Images,DateCreated,'
                             'DateLastRefreshed,DateLastSaved) VALUES (?,?,3,?,?,?,?,?,?,?,?,?)',
@@ -35150,13 +35389,15 @@ def embyfix_v4_import(which='emby', items=None, dry_run=False):
                         continue
                     key = maxkey + 1
                     maxkey += 1
+                    # 🔴 不写 Images 字段：Emby 的 Images 有专用格式(path*hash*Primary*0*0*null)，
+                    #    手写会导致 Emby 读取报错；交给 Emby 自己生成。
                     cur.execute('INSERT INTO MediaItems (Name,SortName,type,ParentId,Path,'
-                                'ProviderIds,PresentationUniqueKey,guid,UserDataKeyId,Images,'
+                                'ProviderIds,PresentationUniqueKey,guid,UserDataKeyId,'
                                 'DateCreated,DateLastRefreshed,DateLastSaved) '
-                                'VALUES (?,?,5,?,?,?,?,?,?,?,?,?,?)',
+                                'VALUES (?,?,5,?,?,?,?,?,?,?,?,?)',
                                 (title, title, fid, path + '/' + f,
                                  ('Tmdb=%s' % tid) if tid else None,
-                                 _uuid.uuid4().hex, _uuid.uuid4().bytes, key, img, now, now, now))
+                                 _uuid.uuid4().hex, _uuid.uuid4().bytes, key, now, now, now))
                     movie_ids.append(cur.execute('SELECT last_insert_rowid()').fetchone()[0])
                     for uid in users:
                         cur.execute('INSERT INTO UserDatas (UserDataKeyId,userId,rating,played,'
@@ -35168,19 +35409,39 @@ def embyfix_v4_import(which='emby', items=None, dry_run=False):
                                 'movie_ids': movie_ids,
                                 'title': title, 'msg': '已建 Folder + %d 集' % mcount})
                 # 单条目 Refresh（让 Emby 读 NFO/封面）：Folder + 每个 Movie
+                # 🔴 用 Default 模式：FullRefresh 会触发 TMDB 在线重刮削，
+                #    Emby 会按 vote 排序自己挑 images 列表里的一张，可能≠TMDB官网主视觉。
+                #    Default 只读本地 NFO/图片，保证与 TMDB 官网一致。
                 try:
                     st, _o = _ef2_http(inst, '/Items/%s/Refresh' % fid, 'POST',
                                        params={'Recursive': 'true',
-                                               'MetadataRefreshMode': 'FullRefresh',
-                                               'ImageRefreshMode': 'FullRefresh'}, t=60)
+                                               'MetadataRefreshMode': 'Default',
+                                               'ImageRefreshMode': 'Default'}, t=60)
                     if st not in (200, 204):
                         results[-1]['refresh'] = 'HTTP %s' % st
+                    # Movie 子项的封面：复制父 Folder 的 Images（Emby 专用格式），
+                    # 否则电影条目本身没有图（目录级 poster.jpg 只被 Folder 采用）
+                    time.sleep(1.5)
+                    pim = _ef3_sql(db, "SELECT Images FROM MediaItems WHERE Id=%d;" % fid)
+                    pimg = ''
+                    if pim and isinstance(pim, list) and pim and isinstance(pim[0], dict):
+                        pimg = pim[0].get('Images') or ''
+                    if pimg:
+                        try:
+                            con2 = _sqlite3.connect(db, timeout=60)
+                            cur2 = con2.cursor()
+                            for mid in movie_ids[:12]:
+                                cur2.execute('UPDATE MediaItems SET Images=? WHERE Id=?', (pimg, mid))
+                            con2.commit()
+                            con2.close()
+                        except Exception:
+                            pass
                     for mid in movie_ids[:12]:
                         try:
                             _ef2_http(inst, '/Items/%s/Refresh' % mid, 'POST',
                                       params={'Recursive': 'false',
-                                              'MetadataRefreshMode': 'FullRefresh',
-                                              'ImageRefreshMode': 'FullRefresh'}, t=45)
+                                              'MetadataRefreshMode': 'Default',
+                                              'ImageRefreshMode': 'Default'}, t=45)
                         except Exception:
                             pass
                 except Exception as e:
@@ -35274,8 +35535,18 @@ def _v4_watchdog():
             if not rows:
                 continue
             _v4_log('自动兜底：发现 %d 部待入库' % len(rows))
-            embyfix_v4_import('emby', rows, dry_run=False)
-            _v4_log('自动兜底完成')
+            res = embyfix_v4_import('emby', rows, dry_run=False)
+            _v4_log('自动兜底完成：%s/%s' % (res.get('ok_count'), res.get('total')))
+            # 入库后立即对齐封面到 TMDB 官网主视觉（保证与官网一致）
+            try:
+                pc = embyfix_v4_poster_check(limit=len(rows) + 4, only_new=True)
+                badrows = pc.get('rows') or []
+                if badrows:
+                    tids = sorted(set(str(r.get('tmdbid')) for r in badrows))
+                    pf = embyfix_v4_poster_fix(tmdbids=tids, limit=len(tids) + 4)
+                    _v4_log('封面已对齐 TMDB 官网主视觉：%s' % (pf.get('ok_count')))
+            except Exception as e:
+                _v4_log('封面对齐异常: %s' % e, False)
         except Exception as e:
             try:
                 _v4_log('自动兜底异常: %s' % e, False)
