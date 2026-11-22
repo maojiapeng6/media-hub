@@ -16298,7 +16298,9 @@ async function ef2V4PosterCheck(){
     if(!EF2_V4_POSTERS.length){return;}
     let h='<div class="sub" style="margin:10px 0 4px">以下片的本地封面 ≠ TMDB 官网主视觉：</div><table class="ef-tb"><thead><tr><th>片名</th><th>TMDB</th><th>操作</th></tr></thead><tbody>';
     EF2_V4_POSTERS.forEach(function(r,i){
+      var why=!r.local_ok?'本地封面≠官网主视觉':(!r.linked?'Emby未关联封面':'');
       h+='<tr><td>'+esc(r.name)+'</td><td>'+(r.tmdbid||'-')+'</td>'+
+        '<td class="sub">'+esc(why)+'</td>'+
         '<td><button class="btn sec ef-mini" onclick="ef2V4PosterFixOne('+i+')">对齐</button></td></tr>';
     });
     const box=document.getElementById('ef2V4List');

@@ -30023,7 +30023,7 @@ class H(BaseHTTPRequestHandler):
         if u.path == '/api/embyfix/v4/poster/check':
             return self._j(embyfix_v4_poster_check(
                 limit=(b.get('limit') if b.get('limit') is not None else 60),
-                only_new=bool(b.get('only_new'))))
+                only_new=bool(b.get('only_new', True))))
         if u.path == '/api/embyfix/v4/poster/fix':
             return self._j(embyfix_v4_poster_fix(
                 tmdbids=(b.get('tmdbids') or []),
@@ -35009,23 +35009,71 @@ def _v4_jpeg_size(path):
     return None
 
 
+
+
+def _v4_restart_emby(after=45):
+    """🔴 直插 library.db 的 item，Emby 运行时的内存索引里并不存在，
+       必须重启 Emby 才会被加载（否则 API 404、无封面、播不了）。
+       用 Docker API 后台重启（异步，不阻塞调用方）。"""
+    def _go():
+        try:
+            st, b = dk('POST', '/containers/emby-main/restart?t=60', t=90)
+            _v4_log('已重启 Emby 以加载新入库条目（HTTP %s）' % st)
+        except Exception as e:
+            _v4_log('重启 Emby 失败: %s' % e, False)
+    try:
+        import threading as _th
+        _th.Thread(target=_go, daemon=True).start()
+        return True
+    except Exception:
+        return False
+
+def _v4_http_bytes(inst, path, t=25):
+    """取 Emby 二进制响应（如图片）。hreq 会 decode 掉二进制，不能用。
+       多地址回退：配置地址 / 127.0.0.1 / 网关 172.17.0.1（容器内 127.0.0.1 常不可达）。"""
+    import http.client as _hc
+    port = int(inst.get('port') or 8096)
+    key = inst.get('key') or ''
+    hosts = []
+    for h in (inst.get('addr'), '127.0.0.1', '172.17.0.1', 'host.docker.internal'):
+        if h and h not in hosts:
+            hosts.append(h)
+    q = path + ('&' if '?' in path else '?') + 'api_key=' + key
+    for host in hosts:
+        try:
+            c = _hc.HTTPConnection(str(host), port, timeout=t)
+            c.request('GET', q, headers={'X-Emby-Token': key, 'Accept': 'image/*'})
+            r = c.getresponse()
+            data = r.read()
+            st = r.status
+            c.close()
+            if st == 200:
+                return st, data
+        except Exception:
+            continue
+    return -1, b''
+
 def embyfix_v4_poster_check(limit=60, only_new=True):
-    """校验本地封面是否 == TMDB 官网主视觉。
-       🔴 判据：TMDB 详情接口的 poster_path（官网主视觉）。
-       本地图是哪一张 → 用 JPEG 像素尺寸在 TMDB images.posters 列表里匹配（不下载图片，快）。
-       只读。返回不符的片。"""
+    """校验封面是否已对齐 TMDB 官网主视觉。
+       判据（两项都要满足）：
+         ① 本地 poster.jpg == TMDB 官网主视觉（详情接口 poster_path，md5 比对）
+         ② Emby 已关联该图：GET /Items/{id}/Images/Primary 返回 >1KB（不是 53 字节报错）
+       （注：Emby 会对图片重新编码，字节与原图不同属正常，不能用「显示图 md5 == 官网图 md5」判据）
+       只读。返回不一致的片。"""
     t0 = _time.time()
     db = _ef3_dbpath()
     if not db:
         return {'ok': False, 'detail': 'library.db 不可达', 'rows': []}
-    strm_root = _ef2_inst('emby')['strm']
+    inst = _ef2_inst('emby')
+    strm_root = inst['strm']
     lo = ('Id>=3498000' if only_new else '1=1')
     sql = ("SELECT Id,Name,Path,ProviderIds,ParentId FROM MediaItems "
-           "WHERE type=5 AND %s AND ProviderIds LIKE '%%Tmdb=%%'" % lo)
+           "WHERE type=5 AND %s AND ProviderIds LIKE '%%Tmdb=%%' LIMIT %d" % (lo, max(10, limit + 10)))
     rows = _ef3_sql(db, sql) or []
     out = []
-    okc = 0
     cache = {}
+    import hashlib as _h
+    import subprocess as _sp
     for r in rows:
         if '__err' in r:
             continue
@@ -35041,30 +35089,36 @@ def embyfix_v4_poster_check(limit=60, only_new=True):
         if tid not in cache:
             cache[tid] = _v4_tmdb_meta(tid)
         meta = cache[tid]
-        if not meta:
+        if not meta or not meta.get('poster'):
             continue
-        main = meta.get('poster') or ''            # 官网主视觉 URL
-        main_path = main.split('/t/p/')[-1].split('/')[-1] if main else ''
-        sz = _v4_jpeg_size(pj)
-        matched = ''
+        # ① 本地图 == 官网图？
         try:
-            for p in (meta.get('posters') or []):
-                if p.get('width') == sz[0] and p.get('height') == sz[1]:
-                    matched = p.get('file_path') or ''
-                    break
+            ref = _v4_fetch(meta['poster'])
         except Exception:
-            pass
-        if matched == main_path:
-            okc += 1
+            continue
+        try:
+            local_md5 = _h.md5(open(pj, 'rb').read()).hexdigest()
+        except Exception:
+            continue
+        local_ok = (local_md5 == _h.md5(ref).hexdigest())
+        # ② Emby 是否关联了图？
+        try:
+            _st, _by = _v4_http_bytes(inst, '/emby/Items/%s/Images/Primary' % r.get('Id'), t=25)
+            shown_len = len(_by) if _st == 200 else 0
+        except Exception:
+            shown_len = 0
+        linked = shown_len > 1024
+        if local_ok and linked:
             continue
         out.append({'eid': r.get('Id'), 'name': r.get('Name') or '', 'tmdbid': tid,
-                    'parent': r.get('ParentId'), 'dir': dd, 'poster': pj,
+                    'parent': r.get('ParentId'), 'dir': dd,
                     'media_type': meta.get('kind'), 'title': meta.get('title'),
-                    'matched': matched or '(尺寸未匹配)', 'main': main_path})
+                    'local_ok': local_ok, 'linked': linked, 'shown_len': shown_len,
+                    'main': meta['poster'].split('/t/p/')[-1].split('/')[-1]})
         if len(out) >= limit:
             break
-    return {'ok': True, 'rows': out, 'total': len(out), 'matched_count': okc,
-            'note': '本地封面 ≠ TMDB官网主视觉（详情接口 poster_path）',
+    return {'ok': True, 'rows': out, 'total': len(out),
+            'note': '本地封面≠官网主视觉，或 Emby 未关联该封面',
             'secs': round(_time.time() - t0, 2)}
 
 
@@ -35090,6 +35144,17 @@ def embyfix_v4_poster_fix(tmdbids=None, limit=60, dry_run=False):
                 results.append({'name': r.get('name'), 'ok': False, 'msg': 'TMDB 无主视觉'})
                 continue
             if not dry_run:
+                # ① 先 FullRefresh：让 Emby 真正接纳这个（DB 直插的）条目、建立文件访问器
+                #    —— 否则 Images/Primary 404、Emby 重启时会把未接纳的条目清掉
+                _ef2_http(inst, '/Items/%s/Refresh' % r.get('parent'), 'POST',
+                          params={'Recursive': 'true', 'MetadataRefreshMode': 'FullRefresh',
+                                  'ImageRefreshMode': 'FullRefresh'}, t=90)
+                _time.sleep(0.8)
+                _ef2_http(inst, '/Items/%s/Refresh' % r.get('eid'), 'POST',
+                          params={'Recursive': 'true', 'MetadataRefreshMode': 'FullRefresh',
+                                  'ImageRefreshMode': 'FullRefresh'}, t=90)
+                _time.sleep(1.2)
+                # ② 再把本地封面覆盖为 TMDB 官网主视觉（FullRefresh 可能换成了 TMDB 的图）
                 _v4_write(os.path.join(r['dir'], 'poster.jpg'), _v4_fetch(meta['poster']))
                 if meta.get('backdrop'):
                     try:
@@ -35124,14 +35189,56 @@ def embyfix_v4_poster_fix(tmdbids=None, limit=60, dry_run=False):
                             (now, r.get('parent')))
                 con.commit()
                 con.close()
-                # Default 模式 Refresh：不触发 TMDB 在线重刮削，Emby 自行读本地
+                # 刷新：先 FullRefresh（让 Emby 建立文件访问器、读到本地图），
+                # 再校验是否 == 官网主视觉；不一致则回退（清 Images + Default + 复制父Folder Images）
+                # ③ 清 Images + Default Refresh：只读本地 NFO/图片，
+                #    保持与 TMDB 官网主视觉一致（Default 不会触发 TMDB 重刮削）
                 _ef2_http(inst, '/Items/%s/Refresh' % r.get('parent'), 'POST',
                           params={'Recursive': 'true', 'MetadataRefreshMode': 'Default',
-                                  'ImageRefreshMode': 'Default'}, t=60)
+                                  'ImageRefreshMode': 'Default'}, t=90)
                 _time.sleep(1.0)
                 _ef2_http(inst, '/Items/%s/Refresh' % r.get('eid'), 'POST',
                           params={'Recursive': 'false', 'MetadataRefreshMode': 'Default',
-                                  'ImageRefreshMode': 'Default'}, t=45)
+                                  'ImageRefreshMode': 'Default'}, t=90)
+                _time.sleep(1.5)
+                try:
+                    import subprocess as _sp
+                    import hashlib as _h
+                    _st, shown = _v4_http_bytes(inst, '/emby/Items/%s/Images/Primary' % r.get('eid'), t=30)
+                    if _st != 200:
+                        shown = b''
+                    ref = _v4_fetch(meta['poster'])
+                    okimg = bool(shown) and len(shown) > 1000 and \
+                        _h.md5(shown).hexdigest() == _h.md5(ref).hexdigest()
+                except Exception:
+                    okimg = True
+                if not okimg:
+                    # 再覆盖一次本地图（确保 Default 刷新读到的是官网图）
+                    try:
+                        _v4_write(os.path.join(r['dir'], 'poster.jpg'), ref)
+                    except Exception:
+                        pass
+                    con = _sqlite3.connect(db, timeout=60)
+                    cur = con.cursor()
+                    cur.execute('UPDATE MediaItems SET Images=NULL WHERE Id=?', (r.get('eid'),))
+                    cur.execute('UPDATE MediaItems SET Images=NULL WHERE Id=?', (r.get('parent'),))
+                    con.commit()
+                    con.close()
+                    _ef2_http(inst, '/Items/%s/Refresh' % r.get('parent'), 'POST',
+                              params={'Recursive': 'true', 'MetadataRefreshMode': 'Default',
+                                      'ImageRefreshMode': 'Default'}, t=60)
+                    _time.sleep(1.0)
+                    con = _sqlite3.connect('file:%s?mode=ro' % db, timeout=60)
+                    pr = con.execute('SELECT Images FROM MediaItems WHERE Id=?', (r.get('parent'),)).fetchone()
+                    con.close()
+                    if pr and pr[0]:
+                        con = _sqlite3.connect(db, timeout=60)
+                        con.execute('UPDATE MediaItems SET Images=? WHERE Id=?', (pr[0], r.get('eid')))
+                        con.commit()
+                        con.close()
+                    _ef2_http(inst, '/Items/%s/Refresh' % r.get('eid'), 'POST',
+                              params={'Recursive': 'false', 'MetadataRefreshMode': 'Default',
+                                      'ImageRefreshMode': 'Default'}, t=45)
             results.append({'name': r.get('name'), 'tmdbid': r.get('tmdbid'),
                             'ok': True, 'msg': '已校正为 TMDB 官网主视觉'})
         except Exception as e:
@@ -35457,6 +35564,13 @@ def embyfix_v4_import(which='emby', items=None, dry_run=False):
     except Exception as e:
         return {'ok': False, 'detail': 'DB 操作失败: %s' % e, 'results': results}
     ok_n = sum(1 for r in results if r.get('ok'))
+    # 🔴 新建的 item 必须重启 Emby 才会被加载（内存索引），否则不显示/无封面
+    if ok_n and not dry_run:
+        try:
+            _v4_restart_emby()
+            results.append({'path': '-', 'ok': True, 'msg': '已触发 Emby 重启以加载新入库条目（约45秒生效）'})
+        except Exception as e:
+            results.append({'path': '-', 'ok': False, 'msg': '重启 Emby 失败，请手动重启: %s' % str(e)[:80]})
     st = _v4_load_state()
     for r in results:
         if r.get('ok') and not r.get('skipped'):

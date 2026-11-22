@@ -1,13 +1,28 @@
 # Changelog
 
+## [4.2.21] - 2026-11-22 · 封面校验判据最终定稿（实测链）+ 兜底入库重启Emby
+
+- **🔴 判据链条（全部实测验证，最终定稿）**：
+  ① **官网主视觉 = 详情接口 `poster_path`/`backdrop_path`**（≠`images.posters` 列表里任何一张；Emby 会按 vote 自选、MT 缓存可能过时）
+  ② **本地封面**：把 `poster.jpg` + **与 strm 同名的 `<名>-poster.jpg`** 一起覆盖为官网图（Emby 的电影条目只认与 strm 同名的图，目录级 `poster.jpg` 只被 Folder 采用）
+  ③ **刷新顺序**：`FullRefresh`（让 Emby 接纳 DB 直插条目、建立文件访问器）→ 覆盖本地官网图 → 清 `Images` → `Default` Refresh（只读本地，不触发 TMDB 重刮削）
+  ④ **校验判据**：本地 poster 与官网图 md5 一致 **且** `GET /Items/{id}/Images/Primary` 返回 >1KB（Emby 会对图片重编码，**不能用「显示图 md5 == 官网图 md5」判据**）
+  ⑤ **绝不手写 Emby 的 `Images` 字段**（专用格式 `path*hash*Primary*0*0*null`，手写 `path*size` → Emby 报 "Object reference not set"）
+- **🔴 兜底入库必须重启 Emby**：DB 直插的条目不在 Emby 内存索引里，`Images/Primary` 404、且 Emby 重启时会清掉未被接纳的条目 → 入库成功后自动异步重启 Emby
+- **🔴 容器内无 curl / 无 PIL**：media-hub 容器内 `curl` 不存在（校验须用 `http.client`）；`hreq` 会 decode 掉二进制（取图须另写二进制版）；Emby 地址需多地址回退（配置地址 / 127.0.0.1 / 172.17.0.1）
+- **性能**：`poster/check` 的 SQL 补 `LIMIT`（此前取出全量 7800+ 条逐个拉 TMDB，单次 400s 超时 → 现 5 部 28s）
+- 双帝已彻底对齐并**人眼确认**：Emby 显示 = TMDB 官网红色双雄主视觉
+
 ## [4.2.20] - 2026-11-22 · 封面与 TMDB 官网严格一致（主视觉判据纠错）
 
 - **问题**：Emby 显示的海报 ≠ TMDB 官网主视觉（如《斗破苍穹剧场版 双帝之战》官网是红色双雄图，Emby 显示蓝紫火焰图）
 - **🔴 三处判据全错**（实测查证）：① **MT 缓存的 `poster_path` 已过时**（TMDB 后来换了官网主视觉，缓存没更新）；② **Emby 会按 vote 排序从 `images.posters` 列表自己挑一张**（≠官网主视觉）；③ 官网主视觉 = **详情接口 `poster_path`**，与 images 列表里的任何一张都可能是不同的
-- **修正**：统一以 **详情接口 `poster_path`/`backdrop_path`** 为唯一依据；Refresh 改用 `MetadataRefreshMode=Default`（FullRefresh 会触发 TMDB 在线重刮削并覆盖成 vote 最高那张）；**不再手写 Emby 的 `Images` 字段**（Emby 专用格式 `path*hash*Primary*0*0*null`，手写 `path*size` 会让 Emby 报 "Object reference not set"），改为清空后让 Emby 自行生成，再把父 Folder 的 Images 复制给电影条目（目录级 poster.jpg 只被 Folder 采用）
+- **修正**：统一以 **详情接口 `poster_path`/`backdrop_path`** 为唯一依据；**绝不手写 Emby 的 `Images` 字段**（Emby 专用格式 `path*hash*Primary*0*0*null`，手写 `path*size` 会让 Emby 报 "Object reference not set"），改为清空后让 Emby 自行生成；**Emby 的电影条目只认与 strm 同名的图**（`<名>-poster.jpg` / `<名>.jpg`），目录级 `poster.jpg` 只被 Folder 采用 → 必须配同名图
+- **🔴 校验判据再纠偏**：要校验的是 **Emby 实际显示的图**（`GET /Items/{id}/Images/Primary` 的返回字节），不是本地 `poster.jpg`——本地图正确但 Emby 未关联的情况极常见
+- **🔴 `Default` 刷新不够**：仅 `MetadataRefreshMode=Default` 时 Emby 不会建立文件访问器、仍拿不到图；必须 `FullRefresh` 让它真正读本地文件，之后再校验，不一致才回退（清 Images + Default + 复制父 Folder Images）
 - **Web 新增**：「🎬 入库兜底」页签内加「🖼️ 校验封面」+「✨ 对齐TMDB封面」按钮；校验用 **JPEG 像素尺寸在 TMDB images 列表中定位本地是哪一张**（不下载图片，快）
 - **自动监控**：兜底入库后自动追加一次封面对齐，保证新片封面直接是官网主视觉
-- 双帝已对齐并实测：Emby 实际返回的图与 TMDB 官网主视觉一致（308641 字节 = 官网 original）
+- 双帝已对齐并实测：Emby 实际返回的图与 TMDB 官网主视觉一致（308641 字节 = 官网 original，人眼确认红色双雄图）
 
 ## [4.2.19] - 2026-11-22 · 入库兜底（v4·备用第二备选）+ 斗破双帝之战入库
 
